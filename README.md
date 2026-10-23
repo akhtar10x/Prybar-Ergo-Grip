@@ -23,6 +23,7 @@ A single-piece screwdriver-style handle:
 | --- | --- |
 | `grip_generator_v05.py` | The generator. All tuning constants live in the `K` dict. |
 | `test_grip_generator_v05.py` | 34 automated checks (geometry, wiring, determinism). |
+| `grip_estimator.py` | Estimates the grip diameter from the other measurements (11 built-in checks). |
 | `hand_template.json` | Example inputs -- copy it and replace the values. |
 
 ## How to run
@@ -40,6 +41,21 @@ Outputs:
 
 Use `--palm-side left` to y-mirror the handle for left hands.
 
+The grip diameter cannot be photographed (it is a closed grip around an
+object), so if no cone measurement exists, estimate it:
+
+```
+python3 grip_estimator.py hand.json
+```
+
+The estimator uses `grip_diameter = (thumb_length + middle_finger_length
++ thumb_thickness) / pi` -- when the hand closes around a cylinder, the
+thumb and middle finger together span about one full circumference, and
+the thumb tip overlapping the fingertip pad buys back one digit
+thickness. Run `python3 grip_estimator.py --selftest` for its checks. If
+`grip_diameter_inside` is already in the JSON, the estimator compares the
+estimate against it and flags a difference larger than 2 mm.
+
 ## The 22 measurements
 
 Hand and grip (4):
@@ -48,7 +64,9 @@ Hand and grip (4):
 - `hand_breadth` -- across the hand (e.g. at the thumb); palm swell height
 - `palm_length` -- wrist crease to middle-finger base; swell extent
 - `grip_diameter_inside` -- inside a clenched grip (e.g. sliding down a
-  cone until thumb and middle finger barely touch); core diameter
+  cone until thumb and middle finger barely touch); core diameter. This
+  one cannot be taken from photographs -- use the cone method, or
+  estimate it with `grip_estimator.py`
 
 Thumb (3):
 
