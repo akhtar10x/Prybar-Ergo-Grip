@@ -1,6 +1,6 @@
 # Evertonians Ergonomic Handle Generator
 
-Parametric Python generator for the Phase 2 prybar handle. It takes 11 hand
+Parametric Python generator for the Phase 2 prybar handle. It takes 22 hand
 measurements (mm) and produces a printable STL handle. No dependencies:
 Python 3 only. Build v0.5.4 (October 2026).
 
@@ -40,19 +40,40 @@ Outputs:
 
 Use `--palm-side left` to y-mirror the handle for left hands.
 
-## The 11 measurements
+## The 22 measurements
+
+Hand and grip (4):
 
 - `hand_length` -- wrist crease to longest fingertip; bounds handle length
-- `hand_breadth` -- across the knuckles; palm swell height
+- `hand_breadth` -- across the hand (e.g. at the thumb); palm swell height
 - `palm_length` -- wrist crease to middle-finger base; swell extent
-- `grip_diameter_inside` -- inside a clenched grip; core diameter
-- `thumb_length`, `thumb_breadth`, `thumb_thickness` -- optional; thumb channel
-- `finger_widths`, `finger_lengths`, `finger_thicknesses` -- 4 values each,
-  index first, pinkie last
-- `web_spaces` -- 3 values
-- `palm_depth` -- optional, unused in v0.5
+- `grip_diameter_inside` -- inside a clenched grip (e.g. sliding down a
+  cone until thumb and middle finger barely touch); core diameter
 
-Out-of-range values are rejected with a clear error.
+Thumb (3):
+
+- `thumb_length` -- thumb channel length
+- `thumb_breadth` -- thumb channel width
+- `thumb_thickness` -- thumb channel depth
+
+Per finger, 4 values each, index first, pinkie last (12):
+
+- `finger_widths` -- groove size, spacing and positions
+- `finger_lengths` -- groove wrap and fingertip curl
+- `finger_thicknesses` -- groove depths
+
+Web spaces (3):
+
+- `web_spaces` -- gaps between adjacent fingers: index-middle, middle-ring,
+  ring-pinkie
+
+Optional:
+
+- `palm_depth` -- unused in v0.5, kept for compatibility
+
+In the input JSON the per-finger values are grouped into three lists of
+four, so the 22 numbers sit in 11 named fields. Out-of-range values are
+rejected with a clear error.
 
 ## Tests
 
