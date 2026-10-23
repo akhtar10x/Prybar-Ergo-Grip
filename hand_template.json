@@ -1,0 +1,16 @@
+{
+  "_note": "EXAMPLE values only -- copy this file, replace every value with real measurements (mm). Ranges are checked by the generator.",
+  "hand_length": 185,
+  "hand_breadth": 82,
+  "palm_length": 100,
+  "grip_diameter_inside": 50,
+  "thumb_length": 65,
+  "thumb_breadth": 24,
+  "thumb_thickness": 21,
+  "palm_depth": null,
+  "finger_widths": [21, 22, 19, 17],
+  "finger_lengths": [72, 80, 70, 60],
+  "finger_thicknesses": [21, 19, 18, 14],
+  "web_spaces": [9, 6, 7],
+  "_provenance": {}
+}
