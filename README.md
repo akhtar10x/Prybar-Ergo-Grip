@@ -93,19 +93,47 @@ In the input JSON the per-finger values are grouped into three lists of
 four, so the 22 numbers sit in 11 named fields. Out-of-range values are
 rejected with a clear error.
 
+### Missing or shortened fingers (v0.5.5)
+
+Hands differ. The generator accepts `null` entries for digits that are
+not there, and small sizes for digits that are:
+
+- `finger_lengths[i] = null` -- that finger is not present: the handle
+  is built without its groove and without the ridges beside it. The row
+  spacing is filled from the fingers that are present.
+- `thumb_length = null` -- no thumb channel. (`thumb_breadth` may then
+  be `null` too; a present thumb still requires `thumb_breadth`.)
+- `null` entries in `finger_widths`, `finger_thicknesses` and
+  `web_spaces` mean "not measured": they are filled from the mean of
+  the measured values and recorded in the params JSON under
+  `_provenance.v055_fills`.
+- At least one finger must be present. Ranges accept short fingers:
+  widths 5-30, lengths 5-115, thicknesses 4-30, thumb length 8-105,
+  thumb breadth 8-36 mm.
+- A fully intact hand rebuilds byte-identically to v0.5.4: every new
+  code path is a no-op for present, in-range measurements.
+
+`grip_estimator.py` follows the same contract: a missing middle finger
+is replaced by the longest present finger; a missing thumb makes the
+grip diameter impossible to estimate (a direct measurement is required).
+
 ## Tests
 
 ```
 python3 test_grip_generator_v05.py
 ```
 
-34 checks: watertight mesh (3 scales), envelope fit, stub/dome layout,
+56 checks: watertight mesh (3 scales), envelope fit, stub/dome layout,
 thumb-channel rotation, groove depths, palm swell, fingertip curl, input
-wiring, determinism. One check compares the body against a reference STL
-and skips politely if that file is absent.
+wiring, determinism, plus the v0.5.5 set: frozen master numbers, missing
+middle finger, shortened (nub) index finger, missing thumb, null web
+fills and the new error cases. One check compares the body against a
+reference STL and skips politely if that file is absent.
 
 ## Version notes
 
+- v0.5.5 -- missing / shortened finger support (null entries, nub-friendly
+  ranges); intact hands rebuild byte-identically to v0.5.4
 - v0.5.4 -- cleanup only; geometry frozen, byte-identical to v0.5.3
 - v0.5.3 -- tilt direction corrected (tip toward the palm flank)
 - v0.5.2 -- rotate the thumb channel, not shift it

@@ -27,6 +27,13 @@
  0.5 mm on one adult hand (see the project notes). Treat it as an
  estimate: if a direct measurement exists, use the direct measurement.
 
+ v0.5.5 missing / shortened finger handling (mirrors the generator):
+ a null finger_lengths entry = finger not present. If the middle finger
+ is not present, the longest present finger takes its place (the first
+ digit to meet the thumb when closing the grip). If the thumb is not
+ present, no estimate is possible: the circumference has no thumb side,
+ so the caller must supply a direct measurement.
+
  Usage:
      python3 grip_estimator.py hand.json            # estimate + compare
      python3 grip_estimator.py hand.json --tolerance 2.0
@@ -39,7 +46,7 @@
  estimate is reported alone. Exit code 0 = ok, 1 = estimate differs from
  the measured value by more than --tolerance, 2 = bad/missing input.
 
- Part of the v0.5.4 code set. Python 3, no dependencies.
+ Part of the v0.5.5 code set. Python 3, no dependencies.
 ===========================================================================
 """
 
@@ -73,26 +80,33 @@ def load_hand(path):
     except json.JSONDecodeError as e:
         raise ValueError("input file is not valid JSON: %s" % e)
 
+    if raw.get("thumb_length") is None:
+        raise ValueError("the thumb is not present, so the grip diameter "
+                         "cannot be estimated from the other measurements; "
+                         "a direct measurement is required")
     for key in REQUIRED:
         if raw.get(key) is None:
             raise ValueError("missing required measurement: '%s'" % key)
 
     fl = raw.get("finger_lengths")
-    if not isinstance(fl, list) or len(fl) < 2 or not fl[1]:
+    if not isinstance(fl, list) or len(fl) != 4:
         raise ValueError("'finger_lengths' must list 4 lengths "
-                         "(index, middle, ring, pinkie); the middle "
-                         "finger (2nd value) drives the estimate")
-    for i in (0, 1):
-        try:
-            fl[i] = float(fl[i])
-        except (TypeError, ValueError):
-            raise ValueError("'finger_lengths' values must be numbers")
+                         "(index, middle, ring, pinkie); a null entry = "
+                         "finger not present")
+    try:
+        fl = [None if x is None else float(x) for x in fl]
+    except (TypeError, ValueError):
+        raise ValueError("'finger_lengths' values must be numbers or null")
+    if not any(x is not None for x in fl):
+        raise ValueError("at least one finger must be present to "
+                         "estimate the grip diameter")
 
     try:
         val = {
             "hand_length": float(raw["hand_length"]),
             "thumb_length": float(raw["thumb_length"]),
             "middle_length": fl[1],
+            "finger_lengths": fl,
         }
     except (TypeError, ValueError):
         raise ValueError("hand_length and thumb_length must be numbers")
@@ -136,11 +150,22 @@ def estimate(val):
         pad = 0.0
         pad_source = "0 (no thickness data; estimate runs high-side)"
 
-    circumference = val["thumb_length"] + val["middle_length"] + pad
+    # v0.5.5: middle finger not present -> the longest present finger
+    # takes its place (it meets the thumb first when the grip closes).
+    if val["middle_length"] is None:
+        lengths = [x for x in val["finger_lengths"] if x is not None]
+        wrap = max(lengths)
+        middle, middle_source = wrap, \
+            "longest present finger (middle not present)"
+    else:
+        middle, middle_source = val["middle_length"], "middle finger"
+
+    circumference = val["thumb_length"] + middle + pad
     diameter = circumference / math.pi
     return {
         "thumb_length": val["thumb_length"],
-        "middle_length": val["middle_length"],
+        "middle_length": middle,
+        "middle_source": middle_source,
         "pad": pad, "pad_source": pad_source,
         "circumference_mm": circumference,
         "grip_diameter_mm": diameter,
@@ -152,7 +177,8 @@ def report(val, est, tolerance):
     lines = [
         "grip diameter estimate",
         "  thumb_length          %6.1f mm" % est["thumb_length"],
-        "  middle_length         %6.1f mm" % est["middle_length"],
+        "  wrap finger (%s) %6.1f mm"
+        % (est["middle_source"], est["middle_length"]),
         "  pad term (%s) %6.1f mm" % (est["pad_source"], est["pad"]),
         "  circumference         %6.1f mm" % est["circumference_mm"],
         "  estimated diameter    %6.1f mm" % est["grip_diameter_mm"],
@@ -184,13 +210,16 @@ def selftest():
         checks.append((name, bool(cond)))
 
     def synth(thumb=70.0, middle=80.0, pad=20.0, measured=None,
-              with_pad=True, with_breadth=True, with_fts=True):
+              with_pad=True, with_breadth=True, with_fts=True,
+              fl=None):
         v = {"hand_length": 180.0, "thumb_length": thumb,
              "middle_length": middle, "thumb_thickness":
              pad if with_pad else None,
              "thumb_breadth": 24.0 if with_breadth else None,
              "finger_thicknesses": [20.0, 19.0, 18.0, 15.0] if with_fts
-             else None, "measured": measured}
+             else None, "measured": measured,
+             "finger_lengths": fl if fl is not None else
+             [70.0, middle, 68.0, 55.0]}
         return v
 
     # 1. known-value math: (70 + 80 + 20) / pi
@@ -247,17 +276,54 @@ def selftest():
           G["PLAUSIBLE_MIN"] <= est10["grip_diameter_mm"]
           <= G["PLAUSIBLE_MAX"])
 
-    # 11. missing middle finger length is a clear error
+    # 11. a 4-entry finger_lengths list is now the required shape
     bad = {"hand_length": 180.0, "thumb_length": 70.0,
            "finger_lengths": [70.0], "measured": None}
-    try:
-        # emulate load_hand validation on a short list
-        if not isinstance(bad["finger_lengths"], list) or \
-                len(bad["finger_lengths"]) < 2:
-            raise ValueError("short list")
-        check("short finger_lengths rejected", False)
-    except ValueError:
-        check("short finger_lengths rejected", True)
+    check("short finger_lengths rejected", len(bad["finger_lengths"]) != 4)
+
+    # 12. v0.5.5: middle finger not present -> longest present finger
+    est12 = estimate(synth(middle=None, fl=[70.0, None, 68.0, 55.0]))
+    check("missing middle -> longest present finger used",
+          est12["middle_source"].startswith("longest")
+          and abs(est12["middle_length"] - 70.0) < 1e-9)
+
+    # 13. missing middle: the math follows the substituted finger
+    est13 = estimate(synth(middle=None, fl=[70.0, None, 68.0, 55.0],
+                           with_pad=False, with_breadth=False,
+                           with_fts=False))
+    check("missing middle -> circumference uses the substitute",
+          abs(est13["circumference_mm"] - 140.0) < 1e-9)
+
+    # 14/15. load_hand round-trip: missing fingers handled at the door
+    import tempfile, os as _os
+    def load_raw(d):
+        fd, path = tempfile.mkstemp(suffix=".json")
+        with _os.fdopen(fd, "w") as f:
+            json.dump(d, f)
+        try:
+            return ("ok", load_hand(path))
+        except ValueError as e:
+            return ("err", str(e))
+        finally:
+            _os.remove(path)
+
+    base14 = {"hand_length": 180.0, "thumb_length": 70.0,
+              "finger_lengths": [None, None, None, None]}
+    st14, msg14 = load_raw(base14)
+    check("all fingers null rejected at load",
+          st14 == "err" and "at least one finger" in msg14)
+
+    st15, msg15 = load_raw(dict(base14,
+                                finger_lengths=[70.0, 80.0, 68.0, 55.0],
+                                thumb_length=None))
+    check("missing thumb rejected at load with a direct-measurement hint",
+          st15 == "err" and "direct measurement" in msg15)
+
+    st16, val16 = load_raw(dict(base14,
+                                finger_lengths=[70.0, None, 68.0, 55.0]))
+    check("missing middle loads and feeds the fallback",
+          st16 == "ok" and val16["middle_length"] is None
+          and estimate(val16)["middle_length"] == 70.0)
 
     fails = [n for n, ok in checks if not ok]
     for name, ok in checks:

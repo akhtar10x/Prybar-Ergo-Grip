@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for grip_generator_v05.py -- compact suite (v0.5).
+"""Tests for grip_generator_v05.py -- compact suite (v0.5, v0.5.5).
 
 Run:  python3 test_grip_generator_v05.py     (exit 0 = all green)
 Checks the v0.5 contract: watertight, envelope, nub on the thumb side,
@@ -207,6 +207,95 @@ with open(os.path.join(tmp, "t_params.json")) as f:
 check("params JSON embeds the inputs",
       all(abs(pj["inputs"][k] - HAND[k]) < 1e-9 for k in
           ("hand_length", "hand_breadth", "grip_diameter_inside")))
+
+print("== v0.5.5: frozen master numbers ==")
+check("master triangle count is 61760", stats["triangles"] == 61760,
+      "%d" % stats["triangles"])
+check("master handle length is 171.03 mm",
+      stats["handle_length_mm"] == 171.03, "%.2f" % stats["handle_length_mm"])
+check("master volume is 201039.2 mm3",
+      abs(stats["volume_mm3"] - 201039.2) < 0.05,
+      "%.1f" % stats["volume_mm3"])
+
+print("== v0.5.5: missing / shortened fingers ==")
+def build_hand(hand, name):
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(hand, f)
+        path = f.name
+    return G.generate(path, outdir=tmp, name=name)
+
+def expect_error(hand, needle):
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(hand, f)
+        path = f.name
+    try:
+        G.generate(path, outdir=tmp, name="err")
+    except ValueError as e:
+        check("rejects %s" % needle, needle in str(e), str(e))
+        return
+    check("rejects %s" % needle, False, "no error raised")
+
+MISSING_MIDDLE = dict(HAND, finger_widths=[22, None, 20, 18],
+                     finger_lengths=[75, None, 73, 62],
+                     finger_thicknesses=[22, None, 19, 15],
+                     web_spaces=[10, None, 8])
+s_mm = build_hand(MISSING_MIDDLE, "mm")
+check("missing middle finger: watertight", s_mm["watertight"])
+mid = [p for p in s_mm["scallop_probes"] if p["finger"] == "middle"]
+check("missing middle finger: no groove spec depth",
+      mid and mid[0]["present"] is False and mid[0]["depth_spec_mm"] == 0.0)
+check("missing middle finger: volume differs from master",
+      abs(s_mm["volume_mm3"] - stats["volume_mm3"]) > 1.0)
+p_mm = os.path.join(tmp, "mm.json")
+with open(p_mm, "w") as f:
+    json.dump(MISSING_MIDDLE, f)
+val_mm, prov_mm = G.load_hand(p_mm)
+check("missing middle finger: width filled from measured mean",
+      val_mm["finger_widths"][1] == (22 + 20 + 18) / 3.0)
+check("missing middle finger: length zeroed",
+      val_mm["finger_lengths"][1] == 0.0)
+check("provenance records the v0.5.5 fills",
+      prov_mm.get("v055_fills", {}).get("finger_lengths[1]")
+      == "no groove (finger not present)")
+
+NUB_INDEX = dict(HAND, finger_widths=[13, 23, 20, 18],
+                finger_lengths=[12, 83, 73, 62],
+                finger_thicknesses=[12, 20, 19, 15])
+s_nub = build_hand(NUB_INDEX, "nub")
+idx = [p for p in s_nub["scallop_probes"] if p["finger"] == "index"]
+check("short nub index finger: watertight", s_nub["watertight"])
+check("short nub index finger: groove still cut",
+      idx and idx[0]["present"] is True and idx[0]["depth_spec_mm"] > 0.0)
+check("short nub index finger: handle shorter than master",
+      s_nub["handle_length_mm"] < stats["handle_length_mm"])
+
+MISSING_THUMB = dict(HAND, thumb_length=None, thumb_breadth=None,
+                     thumb_thickness=None)
+s_mt = build_hand(MISSING_THUMB, "mt")
+check("missing thumb: watertight", s_mt["watertight"])
+tp_mt = s_mt.get("thumb_probe")
+check("missing thumb: channel omitted",
+      tp_mt is None or (tp_mt["present"] is False
+                        and tp_mt["depth_spec_mm"] == 0.0))
+check("missing thumb: handle shorter than master",
+      s_mt["handle_length_mm"] < stats["handle_length_mm"])
+
+NULL_WEBS = dict(HAND, web_spaces=[None, None, None])
+s_nw = build_hand(NULL_WEBS, "nw")
+check("all-null web gaps: build watertight with typical fill",
+      s_nw["watertight"])
+
+expect_error(dict(HAND, finger_lengths=[None, None, None, None]),
+             "at least one")
+expect_error(dict(HAND, finger_widths=[None, None, None, None]),
+             "at least one")
+expect_error(dict(HAND, finger_thicknesses=[None, None, None, None]),
+             "at least one")
+expect_error(dict(HAND, thumb_length=69, thumb_breadth=None),
+             "thumb_breadth")
+expect_error(dict(HAND, finger_lengths=[4, 83, 73, 62]),
+             "outside")
+expect_error(dict(HAND, thumb_length=5), "outside")
 
 print()
 if FAILED:

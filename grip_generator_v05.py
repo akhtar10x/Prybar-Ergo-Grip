@@ -1,10 +1,27 @@
 #!/usr/bin/env python3
 """Evertonians prybar handle, v0.5 -- clean rewrite (Oct 2026).
 
-Geometry is FROZEN at v0.5.3; this v0.5.4 pass only tidies the code
-(grouped constants, clearer sections, argparse CLI). No formula,
-constant or mesh-generation step changed -- the user's handle rebuilds
-byte-identically from this file.
+Geometry is FROZEN at v0.5.3. The v0.5.4 pass tidied the code only
+(grouped constants, clearer sections, argparse CLI); no formula,
+constant or mesh-generation step changed. The v0.5.5 pass adds
+MISSING / SHORTENED FINGER support (amputee and nub hands):
+
+  * a null entry in finger_lengths = finger NOT PRESENT: that
+    finger's groove and the ridges beside it are omitted, and its
+    width/thickness/web entries are filled from the fingers that
+    ARE present (row spacing is preserved);
+  * a null thumb_length = no thumb: the thumb channel is omitted
+    (thumb_breadth may then be null too);
+  * per-finger ranges widened for nubs (width 5-30, length 5-115,
+    thickness 4-30 mm; thumb length 8-105, breadth 8-36 mm); a
+    web_spaces entry may be null when a neighbouring finger is
+    missing;
+  * a fully intact hand rebuilds BYTE-IDENTICALLY to v0.5.4: every
+    new path is a no-op when all four fingers and the thumb are
+    present.
+
+Every value the generator fills is recorded in the params JSON under
+_provenance.v055_fills.
 
 The sculpted body is the validated v0.4.4 right-hand model (verified
 feature-for-feature against the published v0.4.4 STL). Since v0.4.4:
@@ -101,11 +118,13 @@ FINGERS = ["index", "middle", "ring", "pinkie"]
 REQUIRED = {
     "hand_length": (140, 235), "hand_breadth": (60, 115),
     "palm_length": (80, 130), "grip_diameter_inside": (30, 85),
-    "thumb_length": (45, 105), "thumb_breadth": (16, 36),
+    "thumb_length": (8, 105), "thumb_breadth": (8, 36),  # null = no thumb
 }
 PER_FINGER = {
-    "finger_widths": (12, 30), "finger_lengths": (40, 115),
-    "finger_thicknesses": (10, 30),
+    # v0.5.5: null entries are allowed in the lists (filled from the
+    # measured fingers); a null finger_lengths entry = no finger.
+    "finger_widths": (5, 30), "finger_lengths": (5, 115),
+    "finger_thicknesses": (4, 30),
 }
 WEB_RANGE = (0, 25)
 
@@ -115,12 +134,12 @@ WIRING = {
     "hand_breadth":         "palm swell height (K_SWELL)",
     "palm_length":          "palm swell extent along the handle (K_PALM)",
     "grip_diameter_inside": "core diameter (K_DIAM x 0.5)",
-    "thumb_length":         "thumb channel length (THUMB_LEN_K)",
+    "thumb_length":         "thumb channel length (THUMB_LEN_K); null = no thumb channel",
     "thumb_breadth":        "thumb channel width (K_THUMB_W)",
     "thumb_thickness":      "thumb channel depth basis (K_THUMB_D), optional",
     "palm_depth":           "optional, unused in v0.5 (kept for compatibility)",
     "finger_widths":        "groove size, spacing and positions",
-    "finger_lengths":       "groove wrap angles (K_WRAP) and curl drift (K_CURL)",
+    "finger_lengths":       "groove wrap angles (K_WRAP) and curl drift (K_CURL); null = no groove",
     "finger_thicknesses":   "groove depths (K_DEPTH)",
     "web_spaces":           "inter-finger gaps (K_WEB) and ridge heights (K_RIDGE)",
 }
@@ -166,21 +185,36 @@ def load_hand(path):
         raise ValueError("hand JSON must be an object")
 
     def four(key, lo, hi):
-        """A single number counts for all four fingers."""
+        """A single number counts for all four fingers. v0.5.5: a null
+        entry = value not available (filled from the measured fingers);
+        a null finger_lengths entry = the finger is not there."""
         v = raw.get(key)
         if isinstance(v, (int, float)):
             v = [float(v)] * 4
         if not isinstance(v, list) or len(v) != 4:
             raise ValueError("'%s' must be a number or a list of 4" % key)
+        out = []
         for x in v:
-            if not (lo <= float(x) <= hi):
-                raise ValueError("'%s' value %g outside %g-%g mm" % (key, x, lo, hi))
-        return [float(x) for x in v]
+            if x is None:
+                out.append(None)
+            elif not (lo <= float(x) <= hi):
+                raise ValueError("'%s' value %g outside %g-%g mm "
+                                 "(null = finger not present or not measured)"
+                                 % (key, x, lo, hi))
+            else:
+                out.append(float(x))
+        return out
 
     val = {}
     for key, (lo, hi) in REQUIRED.items():
         if key not in raw:
             raise ValueError("missing required input '%s'" % key)
+        if raw[key] is None:
+            if key not in ("thumb_length", "thumb_breadth"):
+                raise ValueError("'%s' must be a number (only thumb_length "
+                                 "and thumb_breadth may be null = no thumb)" % key)
+            val[key] = None
+            continue
         v = float(raw[key])
         if not (lo <= v <= hi):
             raise ValueError("'%s' value %g outside %g-%g mm" % (key, v, lo, hi))
@@ -191,17 +225,69 @@ def load_hand(path):
         val[key] = four(key, lo, hi)
     webs = raw.get("web_spaces")
     if not isinstance(webs, list) or len(webs) != 3:
-        raise ValueError("'web_spaces' must be a list of 3 numbers")
+        raise ValueError("'web_spaces' must be a list of 3 numbers (null "
+                         "allowed where a neighbouring finger is missing)")
     for w in webs:
-        if not (WEB_RANGE[0] <= float(w) <= WEB_RANGE[1]):
+        if w is not None and not (WEB_RANGE[0] <= float(w) <= WEB_RANGE[1]):
             raise ValueError("web_space %g outside %g-%g mm" % (w, *WEB_RANGE))
-    val["web_spaces"] = [float(w) for w in webs]
+    val["web_spaces"] = [None if w is None else float(w) for w in webs]
 
     # Optional inputs.
     val["palm_depth"] = float(raw["palm_depth"]) if raw.get("palm_depth") else None
     val["thumb_thickness"] = (float(raw["thumb_thickness"])
                               if raw.get("thumb_thickness") else None)
-    return val, raw.get("_provenance", {})
+
+    # ------------------------------------------------------------------
+    # v0.5.5 missing / shortened finger handling. A null finger_lengths
+    # entry = finger NOT PRESENT: the geometry leaves out that groove
+    # and the ridges beside it. Widths and thicknesses may be null for
+    # any finger and are filled from the measured ones (they set the
+    # row spacing and, for present fingers, the groove depth). Web
+    # gaps may be null (filled from the measured gaps). The thumb may
+    # be null. Every fill is recorded in the provenance.
+    # ------------------------------------------------------------------
+    fills = {}
+    fl = val["finger_lengths"]
+    if not any(x is not None for x in fl):
+        raise ValueError("at least one of the four fingers must be present "
+                         "(every finger_lengths entry is null)")
+    for key in ("finger_widths", "finger_thicknesses"):
+        arr = val[key]
+        meas = [x for x in arr if x is not None]
+        if not meas:
+            raise ValueError("'%s': at least one finger needs a measured "
+                             "value (the rest can be null)" % key)
+        mean = sum(meas) / len(meas)
+        for i in range(4):
+            if arr[i] is None:
+                arr[i] = mean
+                fills["%s[%d]" % (key, i)] = (
+                    "mean of the measured values" if fl[i] is not None else
+                    "spacing fill (finger not present)")
+    for i in range(4):
+        if fl[i] is None:
+            fl[i] = 0.0
+            fills["finger_lengths[%d]" % i] = "no groove (finger not present)"
+    webs = val["web_spaces"]
+    wmeas = [w for w in webs if w is not None]
+    wfill = (sum(wmeas) / len(wmeas)) if wmeas else 6.0
+    for j in range(3):
+        if webs[j] is None:
+            webs[j] = wfill
+            fills["web_spaces[%d]" % j] = ("mean of the measured gaps"
+                                           if wmeas else "typical 6 mm")
+    if val["thumb_length"] is None:
+        if val["thumb_breadth"] is not None:
+            fills["thumb_breadth"] = "ignored (thumb not present)"
+        val["thumb_breadth"] = None
+        fills["thumb_length"] = "no thumb channel (thumb not present)"
+    elif val["thumb_breadth"] is None:
+        raise ValueError("'thumb_breadth' is required when the thumb is "
+                         "present (only thumb_length may be null = no thumb)")
+    prov = dict(raw.get("_provenance", {}))
+    if fills:
+        prov["v055_fills"] = fills
+    return val, prov
 
 
 # ---------------------------------------------------------------------------
@@ -216,13 +302,14 @@ def layout(val):
     half = [0.5 * w for w in val["finger_widths"]]
     w = val["finger_widths"]
     t = val["finger_thicknesses"]
-    webs, fl = val["web_spaces"], val["finger_lengths"]
+    webs, fl = val["web_spaces"], val["finger_lengths"]   # fl[i] = 0.0 if not present
     pitch = [0.5 * (w[i] + w[i + 1]) + K["K_WEB"] * webs[i] for i in range(3)]
 
     # Finger row: INDEX nearest the stub (thumb side), pinkie nearest the
     # cap (v0.4.4 order). c1 clears the thumb channel's rear edge from the
     # blend.
-    hl_thumb = 0.5 * K["THUMB_LEN_K"] * val["thumb_length"]
+    tl = val["thumb_length"] or 0.0        # v0.5.5: None = no thumb channel
+    hl_thumb = 0.5 * K["THUMB_LEN_K"] * tl
     c1 = max(r_dome + 1.5 + half[0] + 1.0,
              r_dome + 1.0 + hl_thumb + edge)
     centers = [c1,
@@ -236,6 +323,10 @@ def layout(val):
 
     wraps = [max(K["K_WRAP_MIN"], min(K["K_WRAP_MAX"],
              math.degrees(K["K_WRAP"] * L / r_core))) for L in fl]
+    # v0.5.5: a finger that is not present (length 0) gets no groove:
+    # zero extent switches off the groove AND the ridges beside it.
+    groove_extents = [wraps[i] + K["K_FALL"] if fl[i] > 0.0 else 0.0
+                      for i in range(4)]
     depths = [K["K_DEPTH"] * ti for ti in t]
     ridge_h = [K["K_RIDGE"] * webs[j] for j in range(3)]
     ridge_c = [0.5 * (centers[j] + half[j] + centers[j + 1] - half[j + 1])
@@ -243,14 +334,16 @@ def layout(val):
 
     swell_amp = K["K_SWELL"] * val["hand_breadth"]
     x_swell_end = x_grip0 + K["K_PALM"] * val["palm_length"]
-    thumb_depth = K["K_THUMB_D"] * (val["thumb_thickness"] or val["thumb_breadth"])
-    thumb_arc_half = math.degrees(0.5 * K["K_THUMB_W"] * val["thumb_breadth"] / r_core)
+    thumb_depth = K["K_THUMB_D"] * (val["thumb_thickness"] or val["thumb_breadth"] or 0.0)
+    tb = val["thumb_breadth"] or 0.0       # v0.5.5: None = no thumb channel
+    thumb_arc_half = math.degrees(0.5 * K["K_THUMB_W"] * tb / r_core)
     A = r_core * K["WT"]
 
     return {
         "r_core": r_core, "r_dome": r_dome, "r_stub": r_stub, "A": A,
         "edge_mm": edge, "scallop_centers": centers, "scallop_half": half,
         "scallop_depths": depths, "groove_wrap_deg": wraps,
+        "groove_extents": groove_extents,
         "ridge_centers": ridge_c, "ridge_heights": ridge_h,
         "row_lo": row_lo, "row_hi": row_hi,
         "x_grip0": x_grip0, "x_grip1": x_grip1,
@@ -275,8 +368,8 @@ def make_radius(val, L, with_fingers=True):
     wraps, ridge_c = L["groove_wrap_deg"], L["ridge_centers"]
     ridge_h = L["ridge_heights"]
     fl, edge = val["finger_lengths"], L["edge_mm"]
-    ROOT, FALL = -K["K_ROOT"], K["K_FALL"]
-    extents = [w + FALL for w in wraps]
+    ROOT = -K["K_ROOT"]
+    extents = L["groove_extents"]        # v0.5.5: 0.0 = finger not present
     CURL, WTAP = K["K_CURL"], K["K_WTAPER"]
 
     def taper(x):
@@ -509,12 +602,16 @@ def mesh_stats(verts, tris, L, radius):
     for i, c in enumerate(L["scallop_centers"]):
         p = probe(c, 270.0, "min")
         if p:
+            present = bool(L["groove_extents"][i] > 0.0)
             p.update({"finger": FINGERS[i],
-                      "depth_spec_mm": round(L["scallop_depths"][i], 2)})
+                      "present": present,
+                      "depth_spec_mm": round(
+                          L["scallop_depths"][i] if present else 0.0, 2)})
             scallops.append(p)
     thumb = probe(L["c_thumb"], K["K_THUMB_ANGLE"], "min")
     if thumb:
-        thumb.update({"depth_spec_mm": round(L["thumb_depth"], 2),
+        thumb.update({"present": bool(L["thumb_arc_half"] > 0.0),
+                      "depth_spec_mm": round(L["thumb_depth"], 2),
                       "angle_deg": K["K_THUMB_ANGLE"],
                       "tilt_deg": K["K_THUMB_TILT"],
                       "rear_angle_deg": K["K_THUMB_ANGLE"] - K["K_THUMB_TILT"],
@@ -559,8 +656,8 @@ def write_stl(path, verts, tris):
 
 def write_params(path, val, prov, L, stats):
     doc = {
-        "generator": "grip_generator_v05.py (v0.5.4 clean rewrite; "
-                      "geometry frozen at v0.5.3)",
+        "generator": "grip_generator_v05.py (v0.5.5 missing/shortened-"
+                      "finger support; geometry frozen at v0.5.3)",
         "inputs": dict(val, **{"_provenance": prov}),
         "input_wiring": WIRING,
         "constants": {k: v for k, v in K.items()},
