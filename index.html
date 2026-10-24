@@ -1,0 +1,2169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hand Photo Measurer</title>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: #8d96a2; color: #1e293b;
+  }
+  body { margin: 0; }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 14px; background: #a2abb7; border-bottom: 1px solid #5c6470;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .btn {
+    display: inline-block; padding: 8px 14px; border-radius: 0;
+    background: #d4a017; color: #1e293b; font-size: 14px; cursor: pointer;
+    border: none; font-weight: 500;
+  }
+  .btn:active { background: #a87f0f; }
+  .btn.ghost { background: #b7bfc9; }
+  .btn.ghost:active { background: #475569; }
+  button, .btn, select, input { touch-action: manipulation; }  /* v3.1.9: taps register at once on phones */
+  #layout { display: flex; flex-direction: column; height: calc(100vh - 57px); }
+  @media (min-width: 900px) {
+    #layout { flex-direction: row; }
+    #viewportWrap { width: 60%; }
+    #panel { width: 40%; border-left: 1px solid #5c6470; }
+  }
+  #viewportWrap { display: flex; flex-direction: column; }
+  #viewport {
+    position: relative; flex: 1; overflow: hidden; background: #757e8a;
+    touch-action: none; min-height: 300px;
+  }
+  #stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+  #photo { display: block; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .dot {
+    position: absolute; width: 4.5px; height: 4.5px; border-radius: 50%;
+    background: #00e676; border: 1px solid #0f172a;
+    box-shadow: 0 0 3px rgba(0,0,0,0.45); pointer-events: none;
+    margin-left: -2.25px; margin-top: -2.25px;
+  }
+  .dot.cal { background: #ff1f1f; }
+  .dot.ai { background: #14b8a6; }
+  .dot.current { background: rgba(244, 63, 94, 0.95); animation: pulse 1s infinite alternate; }
+  .dot.labeled {
+    width: 10px; height: 10px; margin-left: -5px; margin-top: -5px;
+    font-size: 6px; font-weight: 700; line-height: 8px; text-align: center;
+    color: #0f172a; pointer-events: auto; cursor: grab;
+    user-select: none; -webkit-user-select: none;
+  }
+  .dot.labeled:active { cursor: grabbing; }
+  @keyframes pulse { to { box-shadow: 0 0 10px 3px rgba(244,63,94,0.7); } }
+  #zoombar {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    background: #a2abb7; border-top: 1px solid #5c6470;
+  }
+  #zoombar button {
+    width: 38px; height: 34px; border: none; border-radius: 0;
+    background: #b7bfc9; color: #1e293b; font-size: 18px; cursor: pointer;
+  }
+  #zoombar .fit { width: auto; padding: 0 12px; font-size: 14px; }
+  #zoomLabel { font-size: 13px; color: #475569; min-width: 48px; text-align: center; }
+  #panel { overflow-y: auto; padding: 12px 14px; background: #8d96a2; }
+  #panel section {
+    background: #a2abb7; border: 1px solid #5c6470; border-radius: 0;
+    padding: 12px; margin-bottom: 12px;
+  }
+  #secCal.active-mode, #secMeas.active-mode { background: #b3a577; }
+  #panel h2 { font-size: 14px; margin: 0 0 8px; color: #1d4ed8; font-weight: 600; }
+  #panel p { font-size: 13px; line-height: 1.45; margin: 6px 0; color: #334155; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; align-items: center; }
+  .modes { display: flex; gap: 6px; margin-bottom: 10px; }
+  .modes button {
+    flex: 1; padding: 8px 6px; font-size: 13px; border-radius: 0; border: 1px solid #5c6470;
+    background: #8d96a2; color: #334155; cursor: pointer;
+  }
+  .modes button.active { background: #d4a017; color: #1e293b; border-color: #a87f0f; }
+  #stepTabs button { font-weight: 600; }
+  label { font-size: 13px; color: #334155; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  input[type="number"], select {
+    width: 70px; padding: 6px; border-radius: 0; border: 1px solid #5c6470;
+    background: #8d96a2; color: #1e293b; font-size: 14px;
+  }
+  select { width: auto; }
+  #calStatus { font-size: 14px; color: #b45309; font-weight: 600; }
+  #currentItem { font-size: 14px; color: #b45309; font-weight: 600; }
+  #itemList { font-size: 13px; padding-left: 18px; margin: 8px 0; }
+  #itemList li { margin: 3px 0; color: #475569; }
+  #itemList li.done { color: #15803d; }
+  #itemList li.now { color: #b45309; font-weight: 600; }
+  #aiStatus { font-size: 13px; line-height: 1.45; color: #334155; margin: 6px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid #5c6470; }
+  th { color: #475569; font-weight: 500; }
+  th.sect { color: #1d4ed8; font-weight: 600; }
+  td.v { text-align: right; font-variant-numeric: tabular-nums; }
+  .est { color: #b45309; font-size: 11px; }
+  #jsonOut {
+    width: 100%; height: 150px; margin-top: 8px; padding: 8px; font-family: ui-monospace, monospace;
+    font-size: 11px; background: #8d96a2; color: #0f766e; border: 1px solid #5c6470; border-radius: 0;
+  }
+  details { font-size: 13px; color: #334155; margin-bottom: 12px; }
+  details summary { cursor: pointer; color: #1d4ed8; }
+  details ul { padding-left: 18px; }
+  details li { margin: 4px 0; }
+  .hint { font-size: 12px; color: #475569; }
+  #emptyState {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #475569; font-size: 14px; padding: 24px; text-align: center;
+    background: #757e8a; z-index: 5;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Hand Photo Measurer</h1>
+  <label class="btn" for="file">Take / choose photo (for the selected step)</label>
+  <input id="file" type="file" accept="image/*" hidden />
+</header>
+<div id="layout">
+  <div id="viewportWrap">
+    <div id="viewport">
+      <div id="stage"><img id="photo" alt="Hand photo to measure" draggable="false" /></div>
+      <div id="emptyState">Pick a step (1 to 3) on the right, take that photo, calibrate two tape marks, then tap the guided points. Start with step 1: palm up, tape lying along the fingers, with the tape's zero at the crease where the hand meets the wrist.</div>
+    </div>
+    <div id="zoombar">
+      <button id="zoomOut" title="Zoom out">&minus;</button>
+      <span id="zoomLabel">—</span>
+      <button id="zoomIn" title="Zoom in">+</button>
+      <button id="fitBtn" class="fit">Fit</button>
+    </div>
+  </div>
+  <aside id="panel">
+    <div class="modes" id="stepTabs">
+      <button data-step="0" class="active">1 · Palm up</button>
+      <button data-step="1">2 · Palm down</button>
+      <button data-step="2">3 · Side view</button>
+    </div>
+
+    <section id="stepHead">
+      <h2 id="stepTitle">1 · Palm up</h2>
+      <p id="stepHint">—</p>
+      <p id="photoStatus" class="hint">No photo yet for this step.</p>
+    </section>
+
+    <section id="secMode">
+      <div class="modes">
+        <button id="modeCal">A · Calibrate tape</button>
+        <button id="modeMeas">B · Measure hand</button>
+      </div>
+    </section>
+
+    <section id="secCal">
+      <h2>Calibrate this photo</h2>
+      <p>Tap two easy-to-see markings on the tape (for example the <b>10</b> and the <b>20</b>), then set their values below.</p>
+      <div class="row">
+        <label>Tap 1 = <input id="calA" type="number" value="10" step="0.5" /> cm</label>
+        <label>Tap 2 = <input id="calB" type="number" value="20" step="0.5" /> cm</label>
+      </div>
+      <p id="calStatus">Waiting for two calibration taps…</p>
+      <p class="hint">Pick the two most widely spaced markings you can see clearly; a longer stretch of tape is more accurate. Caution: many tapes print inches on one edge; tap numbers on the cm edge, or convert (1 inch = 2.54 cm).</p>
+    </section>
+
+    <section id="secAI">
+      <h2>AI assist (optional, photo 1 only)</h2>
+      <p>A Google hand-detection model (MediaPipe) can place the starting dots on the palm-up photo. It runs entirely on your device, and the photo never leaves this page. The first use downloads the model (about 10 MB), so it needs internet once. The chat preview blocks that download: use the downloaded copy of this page.</p>
+      <div class="row"><button class="btn ghost" id="aiBtn">Auto-place points with AI</button></div>
+      <p id="aiStatus" class="hint">The AI sees finger joints, not skin creases or edges. Teal dots are AI proposals, numbered like the list; check each one against the photo and drag any dot to adjust it.</p>
+    </section>
+
+    <section id="secMeas">
+      <h2 id="measTitle">Tap the measurements</h2>
+      <p id="currentItem">—</p>
+      <div class="row" id="fingerSelRow" style="display:none">
+        <label>Thickness tapped on which finger?
+          <select id="fingerSel">
+            <option value="0" selected>Index</option>
+            <option value="1">Middle</option>
+            <option value="2">Ring</option>
+            <option value="3">Little</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <button class="btn ghost" id="undoBtn">Undo last</button>
+        <button class="btn ghost" id="skipBtn">Skip (not visible)</button>
+      </div>
+      <ol id="itemList"></ol>
+      <p class="hint">Zoom in (buttons or pinch) before each tap for the best precision. Drag an empty spot to move the photo around. Each measurement in steps 2 and 3 needs TWO taps: one edge, then the opposite edge. Drag any dot to fine-tune it, or click a line in the list to tap that measurement again.</p>
+    </section>
+
+    <details id="secFingers">
+      <summary>Fingers present on this hand</summary>
+      <p>Leave everything as it is for a typical hand. Set a finger to <b>Missing</b> if it is not there at all: its tap points disappear and the handle is built without its groove. Set it to <b>Shortened</b> if it is much shorter than usual (for example a nub): you still tap its points at the tip it has today, and the size checks accept the small measurements.</p>
+      <div class="row">
+        <label>Index
+          <select id="fsIndex"><option value="present" selected>Present</option><option value="short">Shortened</option><option value="missing">Missing</option></select>
+        </label>
+        <label>Middle
+          <select id="fsMiddle"><option value="present" selected>Present</option><option value="short">Shortened</option><option value="missing">Missing</option></select>
+        </label>
+        <label>Ring
+          <select id="fsRing"><option value="present" selected>Present</option><option value="short">Shortened</option><option value="missing">Missing</option></select>
+        </label>
+        <label>Little
+          <select id="fsLittle"><option value="present" selected>Present</option><option value="short">Shortened</option><option value="missing">Missing</option></select>
+        </label>
+        <label>Thumb
+          <select id="fsThumb"><option value="present" selected>Present</option><option value="missing">Missing</option></select>
+        </label>
+      </div>
+      <p class="hint">Changes apply right away, on every photo. If the thumb is missing, the grip diameter cannot be estimated; type your own measured value in the Generate section when you get there. After any change, click Generate STL again before downloading: the download button hides until the shape matches your current numbers.</p>
+    </details>
+
+    <section id="secResults">
+      <h2>Results (all three photos combined)</h2>
+      <p id="warnBox" style="display:none; color:#7f1d1d; background:#cfa6a6; border:1px solid #a03030; border-radius:0; padding:8px 10px; font-size:13px;"></p>
+      <table id="resultsTable"></table>
+      <div class="row"><button class="btn" id="copyBtn">Copy JSON</button></div>
+      <textarea id="jsonOut" readonly placeholder="Results JSON appears here as you measure."></textarea>
+      <p class="hint">Values marked "est." are estimated, not measured; see the estimation note below for how. All measurements are rounded to the nearest whole millimetre. The grip diameter is estimated from your other measurements; if you measured your grip size with a separate tool, enter it in the Generate section and it is used instead.</p>
+    </section>
+
+    <section id="secGen">
+      <h2>Generate the STL</h2>
+      <p>Builds the printable handle right here from the measurements above. It is the same shape as our original generator, rebuilt to run inside this page, and was verified to produce the identical result.</p>
+      <div class="row">
+        <label>Hand
+          <select id="sideSel">
+            <option value="right" selected>Right</option>
+            <option value="left">Left (mirror)</option>
+          </select>
+        </label>
+        <label>Grip diameter override (mm, optional)
+          <input id="gripOverride" type="number" step="0.5" placeholder="estimated" />
+        </label>
+        <button class="btn" id="genBtn">Generate STL</button>
+      </div>
+      <p id="genStatus" style="display:none; color:#7f1d1d; background:#cfa6a6; border:1px solid #a03030; border-radius:0; padding:8px 10px; font-size:13px;"></p>
+      <div id="genStats"></div>
+      <div class="row"><button class="btn" id="dlBtn" style="display:none">Download STL</button></div>
+      <p class="hint">Use the override only if you measured your grip diameter with a separate tool: type it in and it replaces the estimate. Estimated thicknesses are used as-is (they are flagged in the JSON). If the download button does nothing inside the preview or inside a chat app's built-in file viewer (WhatsApp's, for example), save this page file and open it in a browser app; everything then works offline in the file.</p>
+    </section>
+
+    <details>
+      <summary>The three photos</summary>
+      <ul>
+        <li><b>Photo 1 (palm up):</b> tape lying along the fingers, its zero at the crease where the hand meets the wrist, fingertips lightly against the tape edge. Hold the camera straight overhead. Gives hand length, palm length, finger lengths, thumb length.</li>
+        <li><b>Photo 2 (palm down):</b> back of the hand up, tape lying across the hand, touching it. Gives hand breadth, thumb breadth, finger widths, and the gaps between the fingers.</li>
+        <li><b>Photo 3 (side view):</b> hand resting on its side so ONE finger is seen from the side, with the tape upright behind that finger, camera straight-on. Gives ONE finger thickness; the other three are estimated.</li>
+        <li>If any finger or the thumb is missing, or a finger is much shorter than usual, set it in the <b>Fingers present on this hand</b> section above; the guided points and the handle adapt to it.</li>
+        <li>All three: cm edge numbers only, no shadows across the creases, whole hand + tape in frame, camera level (use the level indicator).</li>
+      </ul>
+    </details>
+
+    <details>
+      <summary>How the estimated thicknesses work</summary>
+      <ul>
+        <li>You tap ONE finger thickness in photo 3 and say which finger it was.</li>
+        <li>The other three are estimated from the finger widths you measured in photo 2, using a typical thickness-to-width ratio for each finger (index 1.00, middle 0.87, ring 0.95, little 0.83).</li>
+        <li>Thumb thickness is always estimated: about 0.88 × thumb breadth (from photo 2).</li>
+        <li>Estimated values are marked "est." in the table and flagged in the JSON under <b>_estimated</b>.</li>
+        <li>These ratios come from one carefully measured hand, so they are a reasonable starting point for any hand; expect a few mm of difference on other people. A wrong estimate only slightly changes the depth of that finger's groove.</li>
+        <li>Grip diameter is estimated as (thumb length + middle finger length + thumb thickness) ÷ π. It is a rough estimate; a grip diameter measured with a separate tool always takes precedence.</li>
+        <li>If the middle finger is missing, the longest finger you have stands in for it in that estimate. If the thumb is missing, no estimate is possible: type your measured grip diameter in the Generate section.</li>
+        <li>If a finger is present but you skip one of its taps, its length or width is filled with the average of your other measured values and marked "est.".</li>
+      </ul>
+    </details>
+  </aside>
+</div>
+
+<script>
+/* Evertonians prybar handle generator -- JavaScript port of
+ * grip_generator_v05.py (v0.5.5, geometry frozen at v0.5.3).
+ * Port verified against the Python reference build: same triangle
+ * count, watertight mesh, matching volume and vertex coordinates.
+ * v0.5.5: missing / shortened finger support. A null finger_lengths
+ * entry = finger not present (no groove, no ridges beside it; the
+ * row spacing is filled from the present fingers); a null
+ * thumb_length = no thumb channel; nub-friendly ranges (width 5-30,
+ * length 5-115, thickness 4-30; thumb length 8-105, breadth 8-36).
+ * A fully intact hand rebuilds byte-identically to v0.5.4.
+ * Self-contained: no dependencies, plain browser JavaScript. */
+var GEN = (function () {
+  "use strict";
+
+  var K = {
+    // core cross-section (superellipse, tapered along the grip)
+    K_DIAM: 0.70, WT: 1.08, N_EXP: 2.40,
+    TAPER_REAR: 1.06, TAPER_FRONT: 0.97,
+    // finger grooves (underside)
+    K_DEPTH: 0.11, K_WEB: 0.70, K_RIDGE: 0.025, K_CURL: 0.10,
+    K_WTAPER: 0.25, K_WRAP: 0.62, K_WRAP_MIN: 100.0, K_WRAP_MAX: 165.0,
+    K_ROOT: 20.0, K_FALL: 20.0, K_EDGE: 0.12,
+    // thumb channel (top)
+    K_THUMB_W: 1.04, K_THUMB_D: 0.15, K_THUMB_TAPER: 0.35,
+    K_THUMB_ANGLE: 90.0, K_THUMB_TILT: -15.0,
+    // palm swell
+    K_SWELL: 0.03, SWELL_ARC: 55.0, SWELL_RAMP: 6.0, K_PALM: 0.55,
+    // ends: bar stub, blend, dome cap
+    STUB_K: 0.40, STUB_LEN: 12.0, BLEND: 10.0, DOME_K: 1.25, THUMB_LEN_K: 0.65,
+    // mesh resolution
+    N_THETA: 160, DOME_STEPS: 20, BODY_STEP: 0.8, BLEND_STEPS: 9, STUB_STEP: 1.5
+  };
+
+  var DEG = Math.PI / 180.0;       // matches Python math.radians
+  var RAD2DEG = 180.0 / Math.PI;   // matches Python math.degrees
+
+  // ----------------------------------------------------------------
+  // small math helpers
+  // ----------------------------------------------------------------
+  function clamp01(u) { return Math.min(Math.max(u, 0.0), 1.0); }
+  function smooth01(u) {
+    u = clamp01(u);
+    return u * u * u * (10.0 - 15.0 * u + 6.0 * u * u);
+  }
+  function pymod(a, b) { return ((a % b) + b) % b; }          // Python-style mod
+  function wrap180(deg) { return pymod(deg + 180.0, 360.0) - 180.0; }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function raisedCos(d, h) {
+    if (Math.abs(d) >= h) return 0.0;
+    return 0.5 * (1.0 + Math.cos(Math.PI * d / h));
+  }
+
+  // ----------------------------------------------------------------
+  // input validation (same ranges as the Python generator)
+  // ----------------------------------------------------------------
+  function validateHand(raw) {
+    var errs = [];
+    function isNum(x) { return typeof x === "number" && isFinite(x); }
+    function isNull(x) { return x === null || x === undefined; }
+    var val = {};
+
+    var REQ = [
+      ["hand_length", 140, 235], ["hand_breadth", 60, 115],
+      ["palm_length", 80, 130], ["grip_diameter_inside", 30, 85],
+      ["thumb_length", 8, 105], ["thumb_breadth", 8, 36]  // v0.5.5: null = no thumb
+    ];
+    for (var i = 0; i < REQ.length; i++) {
+      var rk = REQ[i][0], lo = REQ[i][1], hi = REQ[i][2], rv = raw[rk];
+      if (isNull(rv)) {
+        if (rk === "thumb_length" || rk === "thumb_breadth") val[rk] = null;
+        else errs.push(rk + " must be a number (only thumb_length and thumb_breadth may be null = no thumb)");
+        continue;
+      }
+      if (!isNum(rv)) errs.push("missing or invalid value: " + rk);
+      else if (rv < lo || rv > hi) errs.push(rk + " = " + rv + " mm is outside " + lo + "-" + hi + " mm");
+      else val[rk] = rv;
+    }
+
+    var GROUPS = [
+      ["finger_widths", 5, 30], ["finger_lengths", 5, 115],
+      ["finger_thicknesses", 4, 30]
+    ];
+    for (i = 0; i < GROUPS.length; i++) {
+      var gk = GROUPS[i][0], glo = GROUPS[i][1], ghi = GROUPS[i][2];
+      var gv = raw[gk], arr;
+      if (isNum(gv)) arr = [gv, gv, gv, gv];
+      else if (gv && gv.length === 4) arr = gv.slice();
+      else { errs.push(gk + " must be a number or a list of 4 values"); continue; }
+      for (var j = 0; j < 4; j++) {
+        if (isNull(arr[j])) { arr[j] = null; continue; }  // v0.5.5: null = not measured / not present
+        if (!isNum(arr[j])) { arr[j] = null; continue; }
+        if (arr[j] < glo || arr[j] > ghi) {
+          errs.push(gk + " value " + arr[j] + " mm is outside " + glo + "-" + ghi + " mm (null = finger not present or not measured)");
+          arr[j] = null;
+        }
+      }
+      val[gk] = arr;
+    }
+
+    var webs = raw.web_spaces, wa = [];
+    if (!webs || webs.length !== 3) {
+      errs.push("web_spaces must be a list of 3 values (null allowed where a neighbouring finger is missing)");
+    } else {
+      for (var q = 0; q < 3; q++) {
+        if (isNull(webs[q]) || !isNum(webs[q])) { wa.push(null); continue; }
+        if (webs[q] < 0 || webs[q] > 25) { errs.push("web_space " + webs[q] + " mm is outside 0-25 mm"); wa.push(null); }
+        else wa.push(webs[q]);
+      }
+      val.web_spaces = wa;
+    }
+
+    val.palm_depth = isNum(raw.palm_depth) ? raw.palm_depth : null;
+    val.thumb_thickness = isNum(raw.thumb_thickness) ? raw.thumb_thickness : null;
+
+    // v0.5.5 missing / shortened finger handling. A null
+    // finger_lengths entry = finger NOT PRESENT: no groove and no
+    // ridges beside it; widths/thicknesses/webs may be null and are
+    // filled from the measured values (they set row spacing and,
+    // for present fingers, groove depth).
+    var fl = val.finger_lengths;
+    if (fl) {
+      var present = 0;
+      for (i = 0; i < 4; i++) if (fl[i] !== null) present++;
+      if (present === 0) errs.push("at least one of the four fingers must be present (every finger_lengths entry is null)");
+      var fillKeys = ["finger_widths", "finger_thicknesses"];
+      for (var fk = 0; fk < 2; fk++) {
+        var fkey = fillKeys[fk], farr = val[fkey];
+        if (!farr) continue;
+        var fsum = 0, fcnt = 0;
+        for (var fm = 0; fm < 4; fm++) if (farr[fm] !== null) { fsum += farr[fm]; fcnt++; }
+        if (fcnt === 0) { errs.push(fkey + ": at least one finger needs a measured value (the rest can be null)"); continue; }
+        var fmean = fsum / fcnt;
+        for (fm = 0; fm < 4; fm++) if (farr[fm] === null) farr[fm] = fmean;
+      }
+      for (i = 0; i < 4; i++) if (fl[i] === null) fl[i] = 0.0;
+    }
+    if (val.web_spaces) {
+      var wsum = 0, wcnt = 0;
+      for (var wq = 0; wq < 3; wq++) if (val.web_spaces[wq] !== null) { wsum += val.web_spaces[wq]; wcnt++; }
+      var wfill = wcnt > 0 ? wsum / wcnt : 6.0;
+      for (wq = 0; wq < 3; wq++) if (val.web_spaces[wq] === null) val.web_spaces[wq] = wfill;
+    }
+    if (val.thumb_length === null) {
+      val.thumb_breadth = null;  // no thumb: the channel is omitted
+    } else if (val.thumb_breadth === null) {
+      errs.push("thumb_breadth is required when the thumb is present (only thumb_length may be null = no thumb)");
+    }
+
+    if (errs.length) return { error: errs.join(" · ") };
+    return { val: val };
+  }
+
+  // ----------------------------------------------------------------
+  // layout: measurements -> feature positions
+  // ----------------------------------------------------------------
+  function layout(val) {
+    var w = val.finger_widths, fl = val.finger_lengths, t = val.finger_thicknesses;
+    var webs = val.web_spaces;
+
+    var r_core = 0.5 * K.K_DIAM * val.grip_diameter_inside;
+    var r_dome = K.DOME_K * r_core;
+    var r_stub = K.STUB_K * r_core;
+    var edge = K.K_EDGE * ((w[0] + w[1] + w[2] + w[3]) / 4.0);
+    var half = [0.5 * w[0], 0.5 * w[1], 0.5 * w[2], 0.5 * w[3]];
+    var pitch = [
+      0.5 * (w[0] + w[1]) + K.K_WEB * webs[0],
+      0.5 * (w[1] + w[2]) + K.K_WEB * webs[1],
+      0.5 * (w[2] + w[3]) + K.K_WEB * webs[2]
+    ];
+
+    var tl = val.thumb_length || 0.0;      // v0.5.5: null = no thumb channel
+    var hl_thumb = 0.5 * K.THUMB_LEN_K * tl;
+    var c1 = Math.max(r_dome + 1.5 + half[0] + 1.0,
+                      r_dome + 1.0 + hl_thumb + edge);
+    var centers = [c1,
+                   c1 + pitch[0],
+                   c1 + pitch[0] + pitch[1],
+                   c1 + pitch[0] + pitch[1] + pitch[2]];
+    var row_lo = centers[0] - 1.3 * half[0] - edge;
+    var row_hi = centers[3] + 1.3 * half[3] + edge;
+    var x_grip0 = r_dome;
+    var x_grip1 = Math.max(row_hi, centers[0] + hl_thumb + edge) + 3.0;
+
+    var wraps = [];
+    for (var i = 0; i < 4; i++) {
+      wraps.push(Math.max(K.K_WRAP_MIN, Math.min(K.K_WRAP_MAX,
+               (K.K_WRAP * fl[i] / r_core) * RAD2DEG)));
+    }
+    // v0.5.5: a finger that is not present (length 0) gets no groove:
+    // zero extent switches off the groove AND the ridges beside it.
+    var grooveExtents = [];
+    for (i = 0; i < 4; i++) grooveExtents.push(fl[i] > 0.0 ? wraps[i] + K.K_FALL : 0.0);
+    var depths = [K.K_DEPTH * t[0], K.K_DEPTH * t[1], K.K_DEPTH * t[2], K.K_DEPTH * t[3]];
+    var ridge_h = [K.K_RIDGE * webs[0], K.K_RIDGE * webs[1], K.K_RIDGE * webs[2]];
+    var ridge_c = [
+      0.5 * (centers[0] + half[0] + centers[1] - half[1]),
+      0.5 * (centers[1] + half[1] + centers[2] - half[2]),
+      0.5 * (centers[2] + half[2] + centers[3] - half[3])
+    ];
+
+    var swell_amp = K.K_SWELL * val.hand_breadth;
+    var x_swell_end = x_grip0 + K.K_PALM * val.palm_length;
+    var thumb_depth = K.K_THUMB_D * (val.thumb_thickness || val.thumb_breadth || 0.0);
+    var tb = val.thumb_breadth || 0.0;    // v0.5.5: null = no thumb channel
+    var thumb_arc_half = (0.5 * K.K_THUMB_W * tb / r_core) * RAD2DEG;
+    var A = r_core * K.WT;
+
+    return {
+      r_core: r_core, r_dome: r_dome, r_stub: r_stub, A: A,
+      edge_mm: edge, scallop_centers: centers, scallop_half: half,
+      scallop_depths: depths, groove_wrap_deg: wraps,
+      groove_extents: grooveExtents,
+      ridge_centers: ridge_c, ridge_heights: ridge_h,
+      row_lo: row_lo, row_hi: row_hi,
+      x_grip0: x_grip0, x_grip1: x_grip1,
+      x_swell_end: x_swell_end, swell_amp: swell_amp,
+      c_thumb: centers[0], hl_thumb: hl_thumb,
+      thumb_depth: thumb_depth, thumb_arc_half: thumb_arc_half,
+      tip_drift_mm: [K.K_CURL * fl[0], K.K_CURL * fl[1], K.K_CURL * fl[2], K.K_CURL * fl[3]],
+      r_envelope: A * K.TAPER_REAR * 1.02 + swell_amp,
+      total_length: x_grip1 + r_dome,
+      handle_within_hand: x_grip1 + r_dome <= val.hand_length
+    };
+  }
+
+  // ----------------------------------------------------------------
+  // surface radius r(x, theta) -- the whole handle in one function
+  // ----------------------------------------------------------------
+  function makeRadius(val, L, withFingers) {
+    var A = L.A, B = L.r_core, n = K.N_EXP;
+    var centers = L.scallop_centers;
+    var halves = L.scallop_half, depths = L.scallop_depths;
+    var wraps = L.groove_wrap_deg, ridgeC = L.ridge_centers;
+    var ridgeH = L.ridge_heights;
+    var fl = val.finger_lengths, edge = L.edge_mm;
+    var ROOT = -K.K_ROOT;
+    var extents = L.groove_extents;        // v0.5.5: 0.0 = finger not present
+    var CURL = K.K_CURL, WTAP = K.K_WTAPER;
+    var maxExtent = Math.max(extents[0], extents[1], extents[2], extents[3]);
+    var maxFL = Math.max(fl[0], fl[1], fl[2], fl[3]);
+
+    function taper(x) {
+      if (x <= L.x_grip0) return K.TAPER_REAR;
+      if (x >= L.x_grip1) return K.TAPER_FRONT;
+      var t = (x - L.x_grip0) / (L.x_grip1 - L.x_grip0);
+      return lerp(K.TAPER_REAR, K.TAPER_FRONT, t);
+    }
+
+    function core(x, th) {
+      var ct = Math.cos(th * DEG), st = Math.sin(th * DEG);
+      var base = Math.pow(Math.pow(Math.abs(ct / A), n) +
+                         Math.pow(Math.abs(st / B), n), -1.0 / n);
+      return base * taper(x);
+    }
+
+    function swell(x, th) {
+      if (!(L.x_grip0 <= x && x <= L.x_swell_end)) return 0.0;
+      var r = K.SWELL_RAMP;
+      var axial = smooth01((x - L.x_grip0) / r)
+                * (1.0 - smooth01((x - (L.x_swell_end - r)) / r));
+      return L.swell_amp * axial * raisedCos(wrap180(th), K.SWELL_ARC);
+    }
+
+    function arc(th) {  // wrap arc walked from the groove root
+      return pymod(360.0 - pymod(th - ROOT, 360.0), 360.0);
+    }
+
+    function drift(i, a) {  // curl drift of groove i's centerline
+      var u = Math.min(a / extents[i], 1.0);
+      return CURL * fl[i] * u * u;
+    }
+
+    function grooveAx(i, xq, u) {  // axial ovoid bowl
+      var c = centers[i], nb, far;
+      if (i === 0) { nb = ridgeC[0]; far = (c > ridgeC[0]) ? L.row_hi : L.row_lo; }
+      else if (i === 3) { nb = ridgeC[2]; far = (c < ridgeC[2]) ? L.row_lo : L.row_hi; }
+      else { nb = ridgeC[i - 1]; far = ridgeC[i]; }
+      var left = Math.min(nb, far), right = Math.max(nb, far);
+      var sl = Math.max((c - left) * (1.0 - WTAP * u), 1e-6);
+      var sh = Math.max((right - c) * (1.0 - WTAP * u), 1e-6);
+      var t = xq - c;
+      return (t <= 0.0) ? smooth01(1.0 + t / sl) : 1.0 - smooth01(t / sh);
+    }
+
+    function grooveAng(i, a) {  // angular profile, peak at fingertip landing
+      var E = extents[i];
+      if (a <= 0.0 || a >= E) return 0.0;
+      var u = a / E, u_tip = wraps[i] / E;
+      var rise = (wraps[i] > 0.0) ? smooth01(a / wraps[i]) : 1.0;
+      var fall = (u > u_tip) ? 1.0 - smooth01((u - u_tip) / (1.0 - u_tip)) : 1.0;
+      return rise * fall;
+    }
+
+    function relief(x, th) {  // grooves (negative) + ridges (positive)
+      var a = arc(th);
+      if (a <= 0.0 || a >= maxExtent) return 0.0;
+      var dmax = CURL * maxFL;
+      if (x < L.row_lo - dmax - 1.0 || x > L.row_hi + 1.0) return 0.0;
+      var total = 0.0;
+      for (var i = 0; i < 4; i++) {
+        if (a < extents[i]) {
+          var u = Math.min(a / extents[i], 1.0);
+          var wa = grooveAx(i, x + drift(i, a), u);
+          if (wa > 0.0) total -= wa * depths[i] * grooveAng(i, a);
+        }
+      }
+      for (var j = 0; j < 3; j++) {
+        var ga = Math.min(grooveAng(j, a), grooveAng(j + 1, a));
+        if (ga <= 0.0) continue;
+        var dR = 0.5 * (drift(j, a) + drift(j + 1, a));
+        var uj = Math.min(a / extents[j], 1.0);
+        var ujp = Math.min(a / extents[j + 1], 1.0);
+        var e0 = centers[j] + (ridgeC[j] - centers[j]) * (1.0 - WTAP * uj);
+        var e1 = centers[j + 1] + (ridgeC[j] - centers[j + 1]) * (1.0 - WTAP * ujp);
+        var lo = Math.min(e0, e1), hi = Math.max(e0, e1);
+        if (lo < x + dR && x + dR < hi) {
+          total += Math.pow(Math.sin(Math.PI * (x + dR - lo) / (hi - lo)), 2)
+                 * ridgeH[j] * ga;
+        }
+      }
+      return total;
+    }
+
+    function thumbCut(x, th) {  // thumb channel, rotated about its midpoint
+      var t = smooth01((x - L.c_thumb) / Math.max(2.0 * L.hl_thumb, 1e-6));
+      var u = clamp01((x - (L.c_thumb - L.hl_thumb))
+                      / Math.max(2.0 * L.hl_thumb, 1e-6));
+      var ctr = K.K_THUMB_ANGLE + K.K_THUMB_TILT * (2.0 * u - 1.0);
+      var across = raisedCos(wrap180(th - ctr),
+                             L.thumb_arc_half * (1.0 - K.K_THUMB_TAPER * t));
+      if (across <= 0.0) return 0.0;
+      var half = L.hl_thumb + edge;
+      var tx = x - L.c_thumb;
+      var px = (tx <= 0.0) ? smooth01(1.0 + tx / half) : 1.0 - smooth01(tx / half);
+      return (px > 0.0) ? L.thumb_depth * px * across : 0.0;
+    }
+
+    return function radius(x, th) {
+      var r = core(x, th) + swell(x, th) - thumbCut(x, th);
+      if (withFingers) r += relief(x, th);
+      return Math.min(Math.max(r, 1.0), L.r_envelope);
+    };
+  }
+
+  // ----------------------------------------------------------------
+  // mesh: one closed shell, flat stub face at x=0, dome apex far end
+  // ----------------------------------------------------------------
+  function buildMesh(val, L, palmSide) {
+    var radiusFn = makeRadius(val, L, true);
+    var N = K.N_THETA;
+    var thetas = [];
+    for (var k = 0; k < N; k++) thetas.push(360.0 * k / N);
+    var rStubRel = L.r_stub / L.r_core;
+    var xStub = K.STUB_LEN;
+    var xBlendEnd = xStub + K.BLEND;
+
+    var st = [];
+    var x = K.STUB_STEP;
+    while (x < xStub - 1e-9) { st.push([x, rStubRel, 0, 1.0]); x += K.STUB_STEP; }
+    st.push([xStub, rStubRel, 0, 1.0]);
+    for (var i = 1; i <= K.BLEND_STEPS; i++) {
+      var bt = i / K.BLEND_STEPS;
+      st.push([lerp(xStub, xBlendEnd, bt), lerp(rStubRel, 1.0, bt), 1, bt]);
+    }
+    var x2 = xBlendEnd + K.BODY_STEP;
+    while (x2 < L.x_grip1) { st.push([x2, 1.0, 2, 0.0]); x2 += K.BODY_STEP; }
+    st.push([L.x_grip1, 1.0, 2, 0.0]);
+    for (var j = K.DOME_STEPS - 1; j > 0; j--) {
+      var phi = 0.5 * Math.PI * j / K.DOME_STEPS;
+      st.push([L.x_grip1 + L.r_dome * Math.cos(phi), Math.sin(phi), 2, 0.0]);
+    }
+
+    var vx = [], vy = [], vz = [], rings = [];
+    for (var si = 0; si < st.length; si++) {
+      var s = st[si];
+      var xs = s[0], cap = s[1], mode = s[2], sbt = s[3];
+      var ring = [];
+      for (var ti = 0; ti < N; ti++) {
+        var th = thetas[ti], r;
+        if (mode === 1) { // blend circle -> superellipse
+          var effA = lerp(L.r_core, L.A, sbt);
+          var effn = lerp(2.0, K.N_EXP, sbt);
+          var ct = Math.cos(th * DEG), sn = Math.sin(th * DEG);
+          r = Math.pow(Math.pow(Math.abs(ct / effA), effn) +
+                       Math.pow(Math.abs(sn / L.r_core), effn),
+                       -1.0 / effn) * cap;
+        } else {
+          r = radiusFn(xs, th) * cap;
+        }
+        ring.push(vx.length);
+        vx.push(xs);
+        vy.push(r * Math.cos(th * DEG));
+        vz.push(r * Math.sin(th * DEG));
+      }
+      rings.push(ring);
+    }
+
+    var tris = [];
+    for (var rj = 0; rj < rings.length - 1; rj++) {
+      var r0 = rings[rj], r1 = rings[rj + 1];
+      for (var kk = 0; kk < N; kk++) {
+        var k2 = (kk + 1) % N;
+        tris.push(r0[kk], r0[k2], r1[kk]);
+        tris.push(r0[k2], r1[k2], r1[kk]);
+      }
+    }
+    var face0 = vx.length;  // flat stub face (x = 0)
+    vx.push(0.0); vy.push(0.0); vz.push(0.0);
+    for (var k3 = 0; k3 < N; k3++) tris.push(face0, rings[0][(k3 + 1) % N], rings[0][k3]);
+    var apex = vx.length;   // dome apex (x = total length)
+    vx.push(st[st.length - 1][0]); vy.push(0.0); vz.push(0.0);
+    var lastRing = rings[rings.length - 1];
+    for (var k4 = 0; k4 < N; k4++) tris.push(apex, lastRing[k4], lastRing[(k4 + 1) % N]);
+
+    if (palmSide === "left") { // left hand: y-mirror + flip winding
+      for (var m = 0; m < vy.length; m++) vy[m] = -vy[m];
+      for (var q = 0; q < tris.length; q += 3) {
+        var tmp = tris[q + 1]; tris[q + 1] = tris[q + 2]; tris[q + 2] = tmp;
+      }
+    }
+    return { vx: vx, vy: vy, vz: vz, tris: tris };
+  }
+
+  // ----------------------------------------------------------------
+  // stats: watertight checks, volume, envelope
+  // ----------------------------------------------------------------
+  function meshStats(m, L) {
+    var tris = m.tris;
+    var nT = tris.length / 3;
+    var edges = new Map();
+    var i;
+    for (i = 0; i < tris.length; i += 3) {
+      var a = tris[i], b = tris[i + 1], c = tris[i + 2];
+      addEdge(a, b); addEdge(b, c); addEdge(c, a);
+    }
+    function addEdge(u, v) {
+      var lo = u < v ? u : v, hi = u < v ? v : u;
+      var key = lo * 100000 + hi;
+      edges.set(key, (edges.get(key) || 0) + 1);
+    }
+    var vol = 0.0;
+    for (i = 0; i < tris.length; i += 3) {
+      var a2 = tris[i], b2 = tris[i + 1], c2 = tris[i + 2];
+      var ax = m.vx[a2], ay = m.vy[a2], az = m.vz[a2];
+      var bx = m.vx[b2], by = m.vy[b2], bz = m.vz[b2];
+      var cx = m.vx[c2], cy = m.vy[c2], cz = m.vz[c2];
+      vol += (ax * (by * cz - bz * cy)
+            - ay * (bx * cz - bz * cx)
+            + az * (bx * cy - by * cx)) / 6.0;
+    }
+    var closed = true;
+    edges.forEach(function (cnt) { if (cnt !== 2) closed = false; });
+    var watertight = (m.vx.length - edges.size + nT === 2) && closed && vol > 0.0;
+
+    var maxR = 0.0;
+    for (i = 0; i < m.vx.length; i++) {
+      var r2 = m.vy[i] * m.vy[i] + m.vz[i] * m.vz[i];
+      if (r2 > maxR) maxR = r2;
+    }
+    maxR = Math.sqrt(maxR);
+    return {
+      vertices: m.vx.length, triangles: nT,
+      watertight: watertight,
+      volume_mm3: Math.round(vol * 10) / 10,
+      handle_length_mm: Math.round(L.total_length * 100) / 100,
+      max_mesh_radius_mm: Math.round(maxR * 100) / 100,
+      envelope_radius_mm: Math.round(L.r_envelope * 100) / 100,
+      envelope_margin_mm: Math.round((L.r_envelope - maxR) * 100) / 100,
+      envelope_ok: maxR <= L.r_envelope + 1e-6,
+      handle_within_hand_length: !!L.handle_within_hand,
+      volume_full: vol
+    };
+  }
+
+  // ----------------------------------------------------------------
+  // binary STL (identical layout to the Python writer)
+  // ----------------------------------------------------------------
+  function buildSTL(m) {
+    var tris = m.tris;
+    var nT = tris.length / 3;
+    var buf = new ArrayBuffer(84 + 50 * nT);
+    var dv = new DataView(buf);
+    var hdr = "evertonians handle v0.5";
+    for (var h = 0; h < 80; h++) dv.setUint8(h, h < hdr.length ? hdr.charCodeAt(h) : 0);
+    dv.setUint32(80, nT, true);
+    var o = 84;
+    for (var i = 0; i < tris.length; i += 3) {
+      var a = tris[i], b = tris[i + 1], c = tris[i + 2];
+      var ax = m.vx[a], ay = m.vy[a], az = m.vz[a];
+      var bx = m.vx[b], by = m.vy[b], bz = m.vz[b];
+      var cx = m.vx[c], cy = m.vy[c], cz = m.vz[c];
+      var u0 = (by - ay) * (cz - az) - (bz - az) * (cy - ay);
+      var u1 = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+      var u2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+      var ln = Math.sqrt(u0 * u0 + u1 * u1 + u2 * u2);
+      if (ln < 1e-30) ln = 1e-30;
+      dv.setFloat32(o, u0 / ln, true);
+      dv.setFloat32(o + 4, u1 / ln, true);
+      dv.setFloat32(o + 8, u2 / ln, true);
+      dv.setFloat32(o + 12, ax, true);
+      dv.setFloat32(o + 16, ay, true);
+      dv.setFloat32(o + 20, az, true);
+      dv.setFloat32(o + 24, bx, true);
+      dv.setFloat32(o + 28, by, true);
+      dv.setFloat32(o + 32, bz, true);
+      dv.setFloat32(o + 36, cx, true);
+      dv.setFloat32(o + 40, cy, true);
+      dv.setFloat32(o + 44, cz, true);
+      dv.setUint16(o + 48, 0, true);
+      o += 50;
+    }
+    return buf;
+  }
+
+  // ----------------------------------------------------------------
+  // top level
+  // ----------------------------------------------------------------
+  function generate(raw, palmSide) {
+    var v = validateHand(raw);
+    if (v.error) return { error: v.error };
+    var L = layout(v.val);
+    var mesh = buildMesh(v.val, L, palmSide || "right");
+    var stats = meshStats(mesh, L);
+    if (!stats.watertight) {
+      return { error: "the mesh failed the watertight check — an internal error, not your measurements; report the values you used" };
+    }
+    return { stats: stats, stl: buildSTL(mesh), layout: L };
+  }
+
+  return {
+    generate: generate,
+    validateHand: validateHand,
+    layout: layout,
+    buildMesh: buildMesh,
+    meshStats: meshStats,
+    buildSTL: buildSTL,
+    K: K
+  };
+})();
+
+
+(function () {
+  "use strict";
+
+  // ------------------------------------------------------------------
+  // DOM handles
+  // ------------------------------------------------------------------
+  var viewport = document.getElementById("viewport");
+  var stage = document.getElementById("stage");
+  var photo = document.getElementById("photo");
+  var emptyState = document.getElementById("emptyState");
+  var zoomLabel = document.getElementById("zoomLabel");
+  var calStatus = document.getElementById("calStatus");
+  var currentItem = document.getElementById("currentItem");
+  var itemList = document.getElementById("itemList");
+  var resultsTable = document.getElementById("resultsTable");
+  var jsonOut = document.getElementById("jsonOut");
+  var stepTitle = document.getElementById("stepTitle");
+  var stepHint = document.getElementById("stepHint");
+  var photoStatus = document.getElementById("photoStatus");
+  var calInA = document.getElementById("calA");
+  var calInB = document.getElementById("calB");
+  var fingerSelRow = document.getElementById("fingerSelRow");
+  var fingerSel = document.getElementById("fingerSel");
+  var secAI = document.getElementById("secAI");
+  var secCal = document.getElementById("secCal");
+  var secMeas = document.getElementById("secMeas");
+  var fingerStatusSel = {
+    index: document.getElementById("fsIndex"),
+    middle: document.getElementById("fsMiddle"),
+    ring: document.getElementById("fsRing"),
+    little: document.getElementById("fsLittle"),
+    thumb: document.getElementById("fsThumb")
+  };
+  var LAST = { out: null, est: null, stl: null, side: "right" };
+
+  // ------------------------------------------------------------------
+  // Step definitions
+  // ------------------------------------------------------------------
+  var STEP_INFO = [
+    { name: "1 · Palm up",
+      hint: "Palm facing up, tape lying along the fingers with its zero at the crease where the hand meets the wrist. This photo gives: hand length, palm length, finger lengths, thumb length." },
+    { name: "2 · Palm down",
+      hint: "Palm facing down (back of the hand up), tape lying across the hand, touching it. This photo gives: hand breadth, thumb breadth, finger widths, and the gaps between the fingers." },
+    { name: "3 · Side view",
+      hint: "Hand resting on its side so one finger is seen from the side, with the tape upright behind that finger. This photo gives ONE finger thickness; the other three are estimated." }
+  ];
+
+  // Items: n = taps needed per item.
+  // Step 0: single landmarks (along-tape positions).
+  // Steps 1-2: pairs (straight two-point distances with this step's calibration).
+  var STEP_ITEMS = [
+    [
+      { key: "wrist",       n: 1, label: "Wrist: the crease where the palm meets the wrist" },
+      { key: "index_base",  n: 1, label: "Index finger base: the LOWEST crease, where the finger meets the palm (not the crease on the knuckle)" },
+      { key: "index_tip",   n: 1, label: "Index fingertip" },
+      { key: "middle_base", n: 1, label: "Middle finger base: the LOWEST crease, where the finger meets the palm (not the knuckle crease)" },
+      { key: "middle_tip",  n: 1, label: "Middle fingertip" },
+      { key: "ring_base",   n: 1, label: "Ring finger base: the LOWEST crease, where the finger meets the palm (not the knuckle crease)" },
+      { key: "ring_tip",    n: 1, label: "Ring fingertip" },
+      { key: "little_base", n: 1, label: "Little finger base: the LOWEST crease, where the finger meets the palm (not the knuckle crease)" },
+      { key: "little_tip",  n: 1, label: "Little fingertip" },
+      { key: "thumb_base",  n: 1, label: "Thumb base: the fold where the thumb joins the hand" },
+      { key: "thumb_tip",   n: 1, label: "Thumb tip" }
+    ],
+    [
+      { key: "hand_breadth",  n: 2, label: "Hand breadth: straight across the palm, right below the fingers (the thumb is not included)",
+        tap1: "one outer edge of the palm", tap2: "the opposite outer edge" },
+      { key: "thumb_breadth", n: 2, label: "Thumb breadth: across the thumb at its thickest point",
+        tap1: "one side edge of the thumb", tap2: "the opposite side edge" },
+      { key: "width_index",   n: 2, label: "Index finger width: across the finger at its lowest knuckle (where it joins the hand)",
+        tap1: "one side edge of the index finger", tap2: "the other side edge" },
+      { key: "width_middle",  n: 2, label: "Middle finger width: across the finger at its lowest knuckle (where it joins the hand)",
+        tap1: "one side edge of the middle finger", tap2: "the other side edge" },
+      { key: "width_ring",    n: 2, label: "Ring finger width: across the finger at its lowest knuckle (where it joins the hand)",
+        tap1: "one side edge of the ring finger", tap2: "the other side edge" },
+      { key: "width_little",  n: 2, label: "Little finger width: across the finger at its lowest knuckle (where it joins the hand)",
+        tap1: "one side edge of the little finger", tap2: "the other side edge" },
+      { key: "web_im",        n: 2, label: "Gap between index and middle fingers: fingers slightly apart, at the V where the skin joins them",
+        tap1: "the edge of the index finger that faces the middle finger, right at the V", tap2: "the edge of the middle finger that faces the index finger, right at the V" },
+      { key: "web_mr",        n: 2, label: "Gap between middle and ring fingers: at the V where the skin joins them",
+        tap1: "the edge of the middle finger that faces the ring finger, right at the V", tap2: "the edge of the ring finger that faces the middle finger, right at the V" },
+      { key: "web_rl",        n: 2, label: "Gap between ring and little fingers: at the V where the skin joins them",
+        tap1: "the edge of the ring finger that faces the little finger, right at the V", tap2: "the edge of the little finger that faces the ring finger, right at the V" }
+    ],
+    [
+      { key: "finger_thickness", n: 2, label: "Finger thickness: the ONE finger seen from the side",
+        tap1: "the top surface of that finger", tap2: "the underside surface of the same finger, at the same spot along it" }
+    ]
+  ];
+
+  // Estimation standards (ratios only, derived from the user's own
+  // caliper measurement set: thickness relative to width per finger).
+  var K_T    = [1.000, 0.870, 0.950, 0.833]; // thickness / width, index..little
+  var REL_T  = [1.000, 0.909, 0.864, 0.682]; // thickness relative to the index finger
+  var THUMB_T_B = 0.88;                      // thumb thickness / thumb breadth
+
+  // ------------------------------------------------------------------
+  // State: one full state object per photo step
+  // ------------------------------------------------------------------
+  function mkStep() {
+    return {
+      url: null, iw: 0, ih: 0, hasPhoto: false,
+      calA: null, calB: null, calAv: 10, calBv: 20,
+      mode: "cal",
+      itemIdx: 0, pts: {}, skipped: {},
+      markers: [],
+      s: 1, ox: 0, oy: 0, fitScale: 1
+    };
+  }
+  var steps = [mkStep(), mkStep(), mkStep()];
+  var cur = 0;
+
+  // ------------------------------------------------------------------
+  // v3.1.7: which digits the user has. "present" (default),
+  // "short" (much shorter than usual: tapped normally, relaxed
+  // checks) or "missing" (no tap points; the handle gets no groove).
+  // ------------------------------------------------------------------
+  var FINGER_STATUS = { index: "present", middle: "present", ring: "present",
+                        little: "present", thumb: "present" };
+  var FKEYS = ["index", "middle", "ring", "little"];
+  var ITEM_FINGERS = {   // which digits an item needs; null = always available
+    wrist: null, hand_breadth: null, finger_thickness: null,
+    index_base: ["index"], index_tip: ["index"], width_index: ["index"],
+    middle_base: ["middle"], middle_tip: ["middle"], width_middle: ["middle"],
+    ring_base: ["ring"], ring_tip: ["ring"], width_ring: ["ring"],
+    little_base: ["little"], little_tip: ["little"], width_little: ["little"],
+    thumb_base: ["thumb"], thumb_tip: ["thumb"], thumb_breadth: ["thumb"],
+    web_im: ["index", "middle"], web_mr: ["middle", "ring"], web_rl: ["ring", "little"]
+  };
+  function keyHidden(stepIdx, key) {
+    var need = ITEM_FINGERS[key];
+    if (need) {
+      for (var i = 0; i < need.length; i++) {
+        if (FINGER_STATUS[need[i]] === "missing") return true;
+      }
+    }
+    return false;
+  }
+  function itemHidden(stepIdx, it) { return keyHidden(stepIdx, it.key); }
+  function skipHidden(s, stepIdx) {
+    var items = STEP_ITEMS[stepIdx];
+    while (s.itemIdx < items.length && itemHidden(stepIdx, items[s.itemIdx])) s.itemIdx++;
+  }
+
+  // ------------------------------------------------------------------
+  // Per-step calibration math
+  // ------------------------------------------------------------------
+  function calOK(s) { return mmPerPx(s) != null; }
+  function mmPerPx(s) {
+    if (!s.calA || !s.calB) return null;
+    var dpx = Math.hypot(s.calB.x - s.calA.x, s.calB.y - s.calA.y);
+    if (dpx < 1) return null;
+    return Math.abs(s.calBv - s.calAv) * 10 / dpx; // mm
+  }
+  function axisUnit(s) {
+    if (!s.calA || !s.calB) return null;
+    var dx = s.calB.x - s.calA.x, dy = s.calB.y - s.calA.y;
+    var d = Math.hypot(dx, dy);
+    if (d < 1) return null;
+    return { x: dx / d, y: dy / d };
+  }
+  function projMm(s, p, q) {
+    var u = axisUnit(s), k = mmPerPx(s);
+    if (!u || !k) return null;
+    return Math.abs((q.x - p.x) * u.x + (q.y - p.y) * u.y) * k;
+  }
+  function distMm(s, p, q) {
+    var k = mmPerPx(s);
+    if (!k) return null;
+    return Math.hypot(q.x - p.x, q.y - p.y) * k;
+  }
+  function tapePosCm(s, p) {
+    var u = axisUnit(s), k = mmPerPx(s);
+    if (!u || !k || !s.calA) return null;
+    var along = (p.x - s.calA.x) * u.x + (p.y - s.calA.y) * u.y;
+    return s.calAv + (along * k) / 10;
+  }
+  function pairVal(s, key) {
+    var P = s.pts[key];
+    if (!P || !P.p2 || !calOK(s)) return null;
+    return distMm(s, P.p1, P.p2);
+  }
+
+  // ------------------------------------------------------------------
+  // Viewport: fit / zoom / pan / markers
+  // ------------------------------------------------------------------
+  function fit() {
+    var s = steps[cur];
+    if (!s.hasPhoto) return;
+    var r = viewport.getBoundingClientRect();
+    var k = Math.min(r.width / s.iw, r.height / s.ih);
+    s.fitScale = k; s.s = k;
+    s.ox = (r.width - s.iw * k) / 2;
+    s.oy = (r.height - s.ih * k) / 2;
+    apply();
+  }
+  function apply() {
+    var s = steps[cur];
+    stage.style.transform = "translate(" + s.ox + "px," + s.oy + "px) scale(" + s.s + ")";
+    zoomLabel.textContent = Math.round(s.s / s.fitScale * 100) + "%";
+    for (var i = 0; i < s.markers.length; i++) {
+      s.markers[i].el.style.transform = "translate(0px,0px) scale(" + (1 / s.s) + ")";
+    }
+  }
+  function clampScale(ns) { return Math.max(steps[cur].fitScale * 0.3, Math.min(steps[cur].fitScale * 24, ns)); }
+  function zoomAt(cx, cy, factor) {
+    var s = steps[cur];
+    var ns = clampScale(s.s * factor);
+    var px = (cx - s.ox) / s.s, py = (cy - s.oy) / s.s;
+    s.ox = cx - px * ns; s.oy = cy - py * ns; s.s = ns;
+    apply();
+  }
+  document.getElementById("zoomIn").addEventListener("click", function () {
+    var r = viewport.getBoundingClientRect();
+    zoomAt(r.width / 2, r.height / 2, 1.6);
+  });
+  document.getElementById("zoomOut").addEventListener("click", function () {
+    var r = viewport.getBoundingClientRect();
+    zoomAt(r.width / 2, r.height / 2, 1 / 1.6);
+  });
+  document.getElementById("fitBtn").addEventListener("click", fit);
+
+  function makeDotEl(m) {
+    var el = document.createElement("div");
+    el.className = "dot " + (m.cls || "") + (m.label ? " labeled" : "");
+    if (m.label) el.textContent = m.label;
+    el.style.left = m.x + "px";
+    el.style.top = m.y + "px";
+    stage.appendChild(el);
+    return el;
+  }
+  function addMarker(x, y, cls, label) {
+    var m = { x: x, y: y, cls: cls || "", label: label || "" };
+    m.el = makeDotEl(m);
+    steps[cur].markers.push(m);
+    apply();
+    return m;
+  }
+  function removeMarker(m) {
+    if (!m) return;
+    var arr = steps[cur].markers;
+    var i = arr.indexOf(m);
+    if (i >= 0) arr.splice(i, 1);
+    if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+  }
+  function removeMarkerIn(stepIdx, m) {  // v3.1.7: for another step's markers
+    if (!m) return;
+    var arr = steps[stepIdx].markers;
+    var i = arr.indexOf(m);
+    if (i >= 0) arr.splice(i, 1);
+    if (m.el && m.el.parentNode) m.el.parentNode.removeChild(m.el);
+  }
+  function clearDots() {
+    var dots = stage.querySelectorAll(".dot");
+    for (var i = 0; i < dots.length; i++) dots[i].parentNode.removeChild(dots[i]);
+  }
+  function rebuildDots() {
+    clearDots();
+    var arr = steps[cur].markers;
+    for (var i = 0; i < arr.length; i++) arr[i].el = makeDotEl(arr[i]);
+    apply();
+  }
+  function markCurrent(m) {
+    var arr = steps[cur].markers;
+    for (var i = 0; i < arr.length; i++) arr[i].el.classList.remove("current");
+    if (m) m.el.classList.add("current");
+  }
+
+  // ------------------------------------------------------------------
+  // Dot dragging: grab a labeled dot and move it instead of re-tapping
+  // ------------------------------------------------------------------
+  function markerByEl(el) {
+    var arr = steps[cur].markers;
+    for (var i = 0; i < arr.length; i++) if (arr[i].el === el) return arr[i];
+    return null;
+  }
+  function moveMarker(m, x, y) {
+    m.x = x; m.y = y;
+    if (m.el) { m.el.style.left = x + "px"; m.el.style.top = y + "px"; }
+    var s = steps[cur];
+    if (s.calA === m || s.calB === m) return;   // cal dots store their own x/y
+    for (var k in s.pts) {                        // keep the measurement in sync
+      var P = s.pts[k];
+      if (P.m1 === m && P.p1) { P.p1.x = x; P.p1.y = y; }
+      if (P.m2 === m && P.p2) { P.p2.x = x; P.p2.y = y; }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Pointer handling: tap = mark, drag = pan, pinch = zoom
+  // ------------------------------------------------------------------
+  var pointers = new Map();
+  var pinch = null;
+  var dragM = null, dragOff = { x: 0, y: 0 }, dragMoved = false;
+
+  viewport.addEventListener("pointerdown", function (e) {
+    var s = steps[cur];
+    if (!s.hasPhoto) return;
+    viewport.setPointerCapture(e.pointerId);
+    if (pointers.size >= 2) dragM = null;  // two fingers: pinch wins over drag
+    var dotEl = (e.target && e.target.closest) ? e.target.closest(".dot") : null;
+    if (dotEl && pointers.size === 0) {
+      var dm = markerByEl(dotEl);
+      if (dm) {
+        var dr = viewport.getBoundingClientRect();
+        dragM = dm; dragMoved = false;
+        dragOff = { x: dm.x - (e.clientX - dr.left - s.ox) / s.s,
+                    y: dm.y - (e.clientY - dr.top - s.oy) / s.s };
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: true });
+        e.preventDefault();
+        return;
+      }
+    }
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false });
+    if (pointers.size === 2) {
+      dragM = null;
+      var ids = Array.from(pointers.keys());
+      var p1 = pointers.get(ids[0]), p2 = pointers.get(ids[1]);
+      pinch = { d: Math.hypot(p2.x - p1.x, p2.y - p1.y), s: s.s };
+    }
+    e.preventDefault();
+  });
+
+  viewport.addEventListener("pointermove", function (e) {
+    if (!pointers.has(e.pointerId)) return;
+    var p = pointers.get(e.pointerId);
+    var s = steps[cur];
+    if (dragM) {  // dragging a dot: move it, keep everything in sync
+      var dgr = viewport.getBoundingClientRect();
+      var dmx = (e.clientX - dgr.left - s.ox) / s.s + dragOff.x;
+      var dmy = (e.clientY - dgr.top - s.oy) / s.s + dragOff.y;
+      if (Math.hypot(dmx - dragM.x, dmy - dragM.y) > 2) dragMoved = true;
+      moveMarker(dragM, dmx, dmy);
+      p.x = e.clientX; p.y = e.clientY;
+      return;
+    }
+    if (pointers.size === 1) {
+      var dx = e.clientX - p.x, dy = e.clientY - p.y;
+      if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 8) p.moved = true;
+      if (p.moved) { s.ox += dx; s.oy += dy; apply(); }
+      p.x = e.clientX; p.y = e.clientY;
+    } else if (pointers.size === 2 && pinch) {
+      p.x = e.clientX; p.y = e.clientY; p.moved = true;
+      var ids = Array.from(pointers.keys());
+      var q1 = pointers.get(ids[0]), q2 = pointers.get(ids[1]);
+      var d = Math.hypot(q2.x - q1.x, q2.y - q1.y);
+      var mid = { x: (q1.x + q2.x) / 2, y: (q1.y + q2.y) / 2 };
+      var r = viewport.getBoundingClientRect();
+      if (d > 10) zoomAt(mid.x - r.left, mid.y - r.top, d / pinch.d);
+      pinch.d = d;
+    }
+  });
+
+  viewport.addEventListener("pointerup", function (e) {
+    var p = pointers.get(e.pointerId);
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (!p) return;
+    var s = steps[cur];
+    if (dragM) {  // finished dragging a dot: recompute, mark AI dots as verified
+      var fin = dragM;
+      dragM = null;
+      if (dragMoved && fin.cls === "ai") {
+        fin.cls = "";
+        if (fin.el) fin.el.className = "dot labeled";
+      }
+      if (s.calA === fin || s.calB === fin) updateCal();
+      else { refreshItems(); computeResults(); }
+      return;
+    }
+    if (!p.moved && s.hasPhoto) {
+      var r = viewport.getBoundingClientRect();
+      var ix = (e.clientX - r.left - s.ox) / s.s;
+      var iy = (e.clientY - r.top - s.oy) / s.s;
+      handleTap(ix, iy);
+    }
+  });
+  viewport.addEventListener("pointercancel", function (e) { pointers.delete(e.pointerId); pinch = null; dragM = null; });
+
+  // ------------------------------------------------------------------
+  // Tap routing (per current step)
+  // ------------------------------------------------------------------
+  function handleTap(x, y) {
+    var s = steps[cur];
+    if (s.mode === "cal") {
+      if (!s.calA) {
+        s.calA = addMarker(x, y, "cal", "1");
+        markCurrent(s.calA);
+        calStatus.textContent = "First mark set. Now tap the second tape marking.";
+      } else if (!s.calB) {
+        s.calB = addMarker(x, y, "cal", "2");
+        markCurrent(null);
+        updateCal();
+      } else {
+        removeMarker(s.calA);
+        s.calA = s.calB;
+        s.calA.label = "1";
+        if (s.calA.el) s.calA.el.textContent = "1";
+        s.calB = addMarker(x, y, "cal", "2");
+        updateCal();
+      }
+    } else {
+      var items = STEP_ITEMS[cur];
+      var it = items[s.itemIdx];
+      if (!it) return;
+      if (itemHidden(cur, it)) return;  // digit marked missing: not tappable
+      var P = s.pts[it.key];
+      if (!P) {
+        var m = addMarker(x, y, "", String(s.itemIdx + 1));
+        s.pts[it.key] = { p1: { x: x, y: y }, m1: m };
+        delete s.skipped[it.key];
+        var ownT = ITEM_FINGERS[it.key];
+        if (ownT && ownT.length === 1) SKIP_ASKED[ownT[0]] = false;
+        if (it.n === 1) { markCurrent(null); advance(); }
+        else markCurrent(m);
+      } else if (it.n === 2 && !P.p2) {
+        var m2 = addMarker(x, y, "", String(s.itemIdx + 1));
+        P.p2 = { x: x, y: y };
+        P.m2 = m2;
+        markCurrent(null);
+        advance();
+      }
+    }
+  }
+
+  function itemComplete(s, it) {
+    var P = s.pts[it.key];
+    return !!P && (it.n === 1 || !!P.p2);
+  }
+
+  function advance() {
+    var s = steps[cur], items = STEP_ITEMS[cur];
+    while (s.itemIdx < items.length &&
+           (itemHidden(cur, items[s.itemIdx]) ||
+            itemComplete(s, items[s.itemIdx]) || s.skipped[items[s.itemIdx].key])) {
+      s.itemIdx++;
+    }
+    refreshItems();
+    computeResults();
+  }
+
+  // Clear one item's points and jump the guide there, so it can be re-tapped
+  // (used to correct a bad tap or to verify/replace an AI-proposed point).
+  function reopenItem(idx) {
+    var s = steps[cur], items = STEP_ITEMS[cur], it = items[idx];
+    if (!it || itemHidden(cur, it)) return;
+    var P = s.pts[it.key];
+    if (P) {
+      removeMarker(P.m1);
+      if (P.m2) removeMarker(P.m2);
+      delete s.pts[it.key];
+    }
+    delete s.skipped[it.key];
+    s.itemIdx = idx;
+    markCurrent(null);
+    refreshItems();
+    computeResults();
+  }
+
+  // ------------------------------------------------------------------
+  // Measurement UI
+  // ------------------------------------------------------------------
+  function tapeTxt(s, p) {
+    var tp = tapePosCm(s, p);
+    return tp == null ? "" : "  ·  tape: " + tp.toFixed(1) + " cm";
+  }
+  function pairTxt(s, key) {
+    var v = pairVal(s, key);
+    return v == null ? "  ·  not calibrated yet" : "  ·  " + Math.round(v) + " mm";
+  }
+
+  function refreshItems() {
+    var s = steps[cur], items = STEP_ITEMS[cur];
+    skipHidden(s, cur);
+    var it = items[s.itemIdx];
+    if (s.mode === "cal" && !calOK(s)) {
+      currentItem.textContent = "First calibrate this photo's tape (button A); the guided taps start right after.";
+    } else if (!it) {
+      currentItem.textContent = "All measurements for this photo are done. See Results, or switch to another step.";
+    } else {
+      var P = s.pts[it.key];
+      if (!P) {
+        currentItem.textContent = "Tap point 1" + (it.n === 2 ? ": " + (it.tap1 || "first edge") : ": " + it.label);
+      } else {
+        currentItem.textContent = "Tap point 2: " + (it.tap2 || "second edge") + "  (" + it.label + ")";
+      }
+    }
+    fingerSelRow.style.display = (cur === 2) ? "flex" : "none";
+    if (cur === 2 && FINGER_STATUS[FKEYS[tRefIdx()]] === "missing") {
+      for (var rf = 0; rf < 4; rf++) {
+        if (FINGER_STATUS[FKEYS[rf]] !== "missing") { fingerSel.value = String(rf); break; }
+      }
+    }
+    itemList.innerHTML = "";
+    for (var i = 0; i < items.length; i++) {
+      var it2 = items[i];
+      if (itemHidden(cur, it2)) continue;  // digit not present: no line, no taps
+      var li = document.createElement("li");
+      var P2 = s.pts[it2.key];
+      if (itemComplete(s, it2)) {
+        li.textContent = (i + 1) + " · " + it2.label + (cur === 0 ? tapeTxt(s, P2.p1) : pairTxt(s, it2.key));
+        li.className = "done";
+      } else if (i === s.itemIdx && s.mode === "meas") {
+        li.textContent = (i + 1) + " · " + it2.label;
+        li.className = "now";
+      } else {
+        li.textContent = (i + 1) + " · " + it2.label;
+        if (s.skipped[it2.key]) li.style.opacity = "0.45";
+      }
+      li.title = "Click to re-tap this measurement";
+      li.style.cursor = "pointer";
+      (function (idx) {
+        li.addEventListener("click", function () {
+          if (steps[cur].mode !== "meas") return;
+          reopenItem(idx);
+        });
+      })(i);
+      itemList.appendChild(li);
+    }
+  }
+
+  // v3.1.8: skipping EVERY point of one finger is ambiguous: hard to
+  // see in the photo, or not on the hand at all? Ask once, then act.
+  var FINGER_ITEMS = {
+    index: [["index_base", 0], ["index_tip", 0], ["width_index", 1]],
+    middle: [["middle_base", 0], ["middle_tip", 0], ["width_middle", 1]],
+    ring: [["ring_base", 0], ["ring_tip", 0], ["width_ring", 1]],
+    little: [["little_base", 0], ["little_tip", 0], ["width_little", 1]],
+    thumb: [["thumb_base", 0], ["thumb_tip", 0], ["thumb_breadth", 1]]
+  };
+  var SKIP_ASKED = { index: false, middle: false, ring: false, little: false, thumb: false };
+  function fingerAllSkipped(f) {
+    for (var k = 0; k < FINGER_ITEMS[f].length; k++) {
+      var key = FINGER_ITEMS[f][k][0], st = FINGER_ITEMS[f][k][1];
+      if (steps[st].pts[key]) return false;
+      if (!steps[st].skipped[key]) return false;
+    }
+    return true;
+  }
+  document.getElementById("skipBtn").addEventListener("click", function () {
+    var s = steps[cur], items = STEP_ITEMS[cur];
+    var it = items[s.itemIdx];
+    if (!it) return;
+    s.skipped[it.key] = true;
+    advance();
+    var need = ITEM_FINGERS[it.key];
+    if (need && need.length === 1 && FINGER_STATUS[need[0]] !== "missing"
+        && fingerAllSkipped(need[0]) && !SKIP_ASKED[need[0]]) {
+      var f = need[0];
+      SKIP_ASKED[f] = true;
+      var fname = (f === "thumb") ? "thumb" : (f + " finger");
+      var noGroove = window.confirm(
+        "You have skipped every measurement point for the " + fname + ".\n\n"
+        + "OK: treat it as NOT PRESENT. The handle is built without "
+        + (f === "thumb" ? "a thumb channel" : "its groove") + ".\n\n"
+        + "Cancel: keep it on the hand, and its size is estimated from your other fingers.");
+      if (noGroove) {
+        fingerStatusSel[f].value = "missing";
+        var secF = document.getElementById("secFingers");
+        if (secF) secF.open = true;   // show the setting that just changed
+        applyFingerStatus();
+      }
+    }
+  });
+
+  document.getElementById("undoBtn").addEventListener("click", function () {
+    var s = steps[cur], items = STEP_ITEMS[cur];
+    if (s.mode === "cal") {
+      if (s.calB) { removeMarker(s.calB); s.calB = null; calStatus.textContent = "Tap the second marking."; }
+      else if (s.calA) { removeMarker(s.calA); s.calA = null; calStatus.textContent = "Waiting for two calibration taps…"; }
+      computeResults();
+      return;
+    }
+    // measure mode: undo the most recent point / item
+    var last = -1;
+    for (var i = 0; i < items.length; i++) {
+      if (itemHidden(cur, items[i])) continue;
+      if (s.pts[items[i].key] || s.skipped[items[i].key]) last = i;
+    }
+    if (last < 0) return;
+    var it = items[last], P = s.pts[it.key];
+    if (P) {
+      if (it.n === 2 && P.p2) {
+        removeMarker(P.m2);
+        delete P.p2; delete P.m2;
+      } else {
+        removeMarker(P.m1);
+        delete s.pts[it.key];
+      }
+      delete s.skipped[it.key];
+      s.itemIdx = last;
+    } else if (s.skipped[it.key]) {
+      delete s.skipped[it.key];
+      s.itemIdx = last;
+    }
+    markCurrent(null);
+    refreshItems();
+    computeResults();
+  });
+
+  fingerSel.addEventListener("change", computeResults);
+  calInA.addEventListener("input", function (e) { steps[cur].calAv = parseFloat(e.target.value) || 0; updateCal(); });
+  calInB.addEventListener("input", function (e) { steps[cur].calBv = parseFloat(e.target.value) || 0; updateCal(); });
+
+  // v3.1.7: apply the finger-presence selects. Marking a digit missing
+  // removes its tap points and dots on every photo it appears in and
+  // moves the guide to the next available measurement.
+  function applyFingerStatus() {
+    FINGER_STATUS.index = fingerStatusSel.index.value;
+    FINGER_STATUS.middle = fingerStatusSel.middle.value;
+    FINGER_STATUS.ring = fingerStatusSel.ring.value;
+    FINGER_STATUS.little = fingerStatusSel.little.value;
+    FINGER_STATUS.thumb = fingerStatusSel.thumb.value;
+    for (var st = 0; st < 3; st++) {
+      var s = steps[st], items = STEP_ITEMS[st];
+      for (var i = 0; i < items.length; i++) {
+        if (!itemHidden(st, items[i])) continue;
+        var P = s.pts[items[i].key];
+        if (P) {
+          removeMarkerIn(st, P.m1);
+          if (P.m2) removeMarkerIn(st, P.m2);
+          delete s.pts[items[i].key];
+        }
+      }
+      skipHidden(s, st);
+    }
+    markCurrent(null);
+    refreshItems();
+    computeResults();
+  }
+  ["index", "middle", "ring", "little", "thumb"].forEach(function (k) {
+    fingerStatusSel[k].addEventListener("change", applyFingerStatus);
+  });
+
+  function updateCal() {
+    var s = steps[cur];
+    var k = mmPerPx(s);
+    if (k == null) {
+      calStatus.textContent = "Set the two tape values, then re-tap the markings.";
+    } else {
+      calStatus.textContent = "Calibrated: " + k.toFixed(4) + " mm per pixel.";
+      if (s.mode === "cal" && s.calA && s.calB) setMode("meas");  // auto-advance: no manual switch needed
+    }
+    photoStatus.textContent = s.hasPhoto ? ("Photo loaded. " + (k != null ? "Calibrated: " + k.toFixed(4) + " mm/px." : "Not calibrated yet.")) : "No photo yet for this step.";
+    computeResults();
+  }
+
+  // ------------------------------------------------------------------
+  // Mode + step switching
+  // ------------------------------------------------------------------
+  var modeBtns = { cal: document.getElementById("modeCal"), meas: document.getElementById("modeMeas") };
+  function setMode(m) {
+    var s = steps[cur];
+    s.mode = m;
+    modeBtns.cal.classList.toggle("active", m === "cal");
+    modeBtns.meas.classList.toggle("active", m === "meas");
+    secCal.classList.toggle("active-mode", m === "cal");
+    secMeas.classList.toggle("active-mode", m === "meas");
+    if (m === "cal") {
+      calStatus.textContent = (s.calA && s.calB)
+        ? "Calibrated: " + mmPerPx(s).toFixed(4) + " mm per pixel. Tap again to replace the second mark."
+        : "Waiting for two calibration taps…";
+    }
+    refreshItems();
+  }
+  modeBtns.cal.addEventListener("click", function () { setMode("cal"); });
+  modeBtns.meas.addEventListener("click", function () { setMode("meas"); });
+
+  var stepTabBtns = document.querySelectorAll("#stepTabs button");
+  var stepBaseNames = ["1 · Palm up", "2 · Palm down", "3 · Side view"];
+  function updateStepTabs() {
+    for (var i = 0; i < stepTabBtns.length; i++) {
+      stepTabBtns[i].classList.toggle("active", i === cur);
+      stepTabBtns[i].textContent = stepBaseNames[i] + (steps[i].hasPhoto ? " ✓" : "");
+    }
+  }
+  for (var bi = 0; bi < stepTabBtns.length; bi++) (function (idx) {
+    stepTabBtns[idx].addEventListener("click", function () { showStep(idx); });
+  })(bi);
+
+  function showStep(i) {
+    cur = i;
+    var s = steps[i];
+    stepTitle.textContent = STEP_INFO[i].name;
+    stepHint.textContent = STEP_INFO[i].hint;
+    secAI.style.display = (i === 0) ? "block" : "none";  // AI assist applies to photo 1 only
+    calInA.value = s.calAv;
+    calInB.value = s.calBv;
+    if (s.hasPhoto) {
+      photo.src = s.url;
+      emptyState.style.display = "none";
+    } else {
+      emptyState.style.display = "flex";
+      photo.removeAttribute("src");
+    }
+    rebuildDots();
+    updateStepTabs();
+    photoStatus.textContent = s.hasPhoto
+      ? ("Photo loaded. " + (calOK(s) ? "Calibrated: " + mmPerPx(s).toFixed(4) + " mm/px." : "Not calibrated yet; do step A."))
+      : "No photo yet for this step.";
+    apply();
+    setMode(s.hasPhoto && calOK(s) ? "meas" : s.mode);  // returning to a calibrated photo goes straight to measuring
+    computeResults();
+  }
+
+  // ------------------------------------------------------------------
+  // Photo loading (into the current step)
+  // ------------------------------------------------------------------
+  // v3.1.9: some in-app viewers (WhatsApp's built-in one, for example) do
+  // not support blob object URLs, so the photo would never appear.
+  // Fall back to reading the photo as a data URL, which works everywhere.
+  function revokeURL(u) {
+    if (u && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function"
+        && String(u).indexOf("blob:") === 0) URL.revokeObjectURL(u);
+  }
+  document.getElementById("file").addEventListener("change", function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var s = steps[cur];
+    function photoFailMsg() {
+      photoStatus.textContent = "That photo could not be loaded in this viewer. Save this page file and open it in a browser app (for example Chrome or Safari), then load the photo there.";
+    }
+    function startPhoto(url, canRetry) {
+      photo.onload = function () {
+        if (photo.src !== url) return;  // a different image is loading (step switch / re-pick): not ours, ignore
+        photo.onload = null;            // ONE-SHOT: switching steps re-sets photo.src and must never re-run this
+        photo.onerror = null;
+        if (s.url) revokeURL(s.url);
+        s.url = url;
+        s.iw = photo.naturalWidth; s.ih = photo.naturalHeight;
+        s.hasPhoto = true;
+        // fresh state for this step's photo
+        clearDots();
+        s.markers = [];
+        s.calA = s.calB = null;
+        s.pts = {}; s.skipped = {}; s.itemIdx = 0;
+        emptyState.style.display = "none";
+        updateStepTabs();
+        fit();
+        setMode("cal");
+        photoStatus.textContent = "Photo loaded. Not calibrated yet; do step A.";
+        computeResults();
+      };
+      photo.onerror = function () {
+        photo.onerror = null;
+        if (canRetry && typeof FileReader !== "undefined") {
+          var rd = new FileReader();
+          rd.onload = function () { startPhoto(rd.result, false); };
+          rd.onerror = function () { photoFailMsg(); };
+          rd.readAsDataURL(f);
+        } else {
+          photoFailMsg();
+        }
+      };
+      photo.src = url;
+    }
+    var url = null;
+    try {
+      if (window.URL && typeof URL.createObjectURL === "function") url = URL.createObjectURL(f);
+    } catch (err1) { url = null; }
+    if (url) {
+      startPhoto(url, true);
+    } else if (typeof FileReader !== "undefined") {
+      var rd2 = new FileReader();
+      rd2.onload = function () { startPhoto(rd2.result, false); };
+      rd2.onerror = function () { photoFailMsg(); };
+      rd2.readAsDataURL(f);
+    } else {
+      photoFailMsg();
+    }
+    // allow re-choosing the same file
+    e.target.value = "";
+  });
+
+  // ------------------------------------------------------------------
+  // Results: aggregate all three steps
+  // ------------------------------------------------------------------
+  function roundMM(v) { return Math.round(v); }  // whole millimetres: one clean number per value
+  function pairRound(s, key) {
+    var v = pairVal(s, key);
+    return v == null ? null : roundMM(v);
+  }
+  function tRefIdx() { return parseInt(fingerSel.value, 10) || 0; }
+
+  function computeResults() {
+    var s0 = steps[0], s1 = steps[1], s2 = steps[2];
+    var out = {
+      hand_length: null, hand_breadth: null, palm_length: null, palm_depth: null,
+      grip_diameter_inside: null,
+      thumb_length: null, thumb_breadth: null, thumb_thickness: null,
+      finger_widths: [null, null, null, null],
+      finger_lengths: [null, null, null, null],
+      finger_thicknesses: [null, null, null, null],
+      web_spaces: [null, null, null]
+    };
+    var est = { finger_thicknesses: [false, false, false, false],
+                finger_lengths: [false, false, false, false],
+                finger_widths: [false, false, false, false],
+                thumb_thickness: false, grip_diameter_inside: false,
+                hand_length: false, palm_length: false };
+
+    // ---- Photo 1 (palm up): along-tape projections ----
+    var p0 = s0.pts;
+    // v3.1.7: if the middle finger is missing, the longest present
+    // finger stands in as the hand-length / palm-length reference.
+    var prim = 1;
+    if (FINGER_STATUS.middle === "missing") {
+      prim = -1;
+      var bl = -1;
+      for (var pi = 0; pi < 4; pi++) {
+        var pt = p0[FKEYS[pi] + "_tip"];
+        if (FINGER_STATUS[FKEYS[pi]] !== "missing" && pt && p0.wrist) {
+          var d = projMm(s0, p0.wrist.p1, pt.p1);
+          if (d != null && d > bl) { bl = d; prim = pi; }
+        }
+      }
+    }
+    var primTip = (prim >= 0) ? p0[FKEYS[prim] + "_tip"] : null;
+    var primBase = (prim >= 0) ? p0[FKEYS[prim] + "_base"] : null;
+    if (p0.wrist && primTip) {
+      var hl = projMm(s0, p0.wrist.p1, primTip.p1);
+      if (hl != null) out.hand_length = roundMM(hl);
+      if (prim !== 1) est.hand_length = true;
+    }
+    if (p0.wrist && primBase) {
+      var pl = projMm(s0, p0.wrist.p1, primBase.p1);
+      if (pl != null) out.palm_length = roundMM(pl);
+      if (prim !== 1) est.palm_length = true;
+    }
+    var names = ["index", "middle", "ring", "little"];
+    for (var i = 0; i < 4; i++) {
+      var b = p0[names[i] + "_base"], t = p0[names[i] + "_tip"];
+      if (b && t) {
+        var v = projMm(s0, b.p1, t.p1);
+        if (v != null) out.finger_lengths[i] = roundMM(v);
+      }
+    }
+    if (p0.thumb_base && p0.thumb_tip) {
+      var tl = distMm(s0, p0.thumb_base.p1, p0.thumb_tip.p1); // thumb crosses the tape: straight distance
+      if (tl != null) out.thumb_length = roundMM(tl);
+    }
+    // v3.1.7: a present finger whose taps were skipped still needs a
+    // value for the generator: fill it with the average of the
+    // measured ones. Missing fingers stay null (no groove).
+    var measL = [];
+    for (i = 0; i < 4; i++) {
+      if (out.finger_lengths[i] != null) measL.push(out.finger_lengths[i]);
+    }
+    var meanL = measL.length ? measL.reduce(function (a, b) { return a + b; }, 0) / measL.length : null;
+    for (i = 0; i < 4; i++) {
+      if (out.finger_lengths[i] == null && FINGER_STATUS[FKEYS[i]] !== "missing" && meanL != null) {
+        out.finger_lengths[i] = roundMM(meanL);
+        est.finger_lengths[i] = true;
+      }
+    }
+
+    // ---- Photo 2 (palm down): pair distances ----
+    if (s1.pts.hand_breadth)  out.hand_breadth  = pairRound(s1, "hand_breadth");
+    if (s1.pts.thumb_breadth) out.thumb_breadth = pairRound(s1, "thumb_breadth");
+    var wkeys = ["width_index", "width_middle", "width_ring", "width_little"];
+    for (i = 0; i < 4; i++) {
+      if (s1.pts[wkeys[i]]) out.finger_widths[i] = pairRound(s1, wkeys[i]);
+    }
+    var measW = [];
+    for (i = 0; i < 4; i++) {
+      if (out.finger_widths[i] != null) measW.push(out.finger_widths[i]);
+    }
+    var meanW = measW.length ? measW.reduce(function (a, b) { return a + b; }, 0) / measW.length : null;
+    for (i = 0; i < 4; i++) {
+      if (out.finger_widths[i] == null && FINGER_STATUS[FKEYS[i]] !== "missing" && meanW != null) {
+        out.finger_widths[i] = roundMM(meanW);
+        est.finger_widths[i] = true;
+      }
+    }
+    var ykeys = ["web_im", "web_mr", "web_rl"];
+    for (i = 0; i < 3; i++) {
+      if (s1.pts[ykeys[i]]) out.web_spaces[i] = pairRound(s1, ykeys[i]);
+    }
+
+    // ---- Photo 3 (side): one measured thickness + estimates ----
+    var ref = tRefIdx();
+    if (FINGER_STATUS[FKEYS[ref]] === "missing") ref = -1;  // never attribute the tap to a missing finger
+    if (ref >= 0 && s2.pts.finger_thickness) {
+      var tv = pairVal(s2, "finger_thickness");
+      if (tv != null) {
+        out.finger_thicknesses[ref] = roundMM(tv);
+        var ws = out.finger_widths;
+        var C = (ws[ref] != null && K_T[ref] > 0) ? tv / (ws[ref] * K_T[ref]) : null;
+        for (i = 0; i < 4; i++) {
+          if (i === ref) continue;
+          if (FINGER_STATUS[FKEYS[i]] === "missing") continue;  // stays null: no finger, no groove
+          if (C != null && ws[i] != null) {
+            out.finger_thicknesses[i] = roundMM(ws[i] * K_T[i] * C);
+          } else {
+            out.finger_thicknesses[i] = roundMM(tv * REL_T[i] / REL_T[ref]);
+          }
+          est.finger_thicknesses[i] = true;
+        }
+      }
+    }
+    if (FINGER_STATUS.thumb !== "missing") {
+      if (out.thumb_thickness == null && out.thumb_breadth != null) {
+        out.thumb_thickness = roundMM(out.thumb_breadth * THUMB_T_B);
+        est.thumb_thickness = true;
+      } else if (out.thumb_thickness == null && out.finger_thicknesses[0] != null) {
+        out.thumb_thickness = out.finger_thicknesses[0];
+        est.thumb_thickness = true;
+      }
+    }
+
+    // ---- Grip diameter estimate ----
+    // v3.1.7: no estimate without a thumb. If the middle finger is
+    // missing, the longest present finger takes its place.
+    if (FINGER_STATUS.thumb !== "missing" && out.thumb_length != null && out.thumb_thickness != null) {
+      var wrapL = out.finger_lengths[1];
+      if (FINGER_STATUS.middle === "missing") {
+        var wl = null;
+        for (i = 0; i < 4; i++) {
+          if (FINGER_STATUS[FKEYS[i]] !== "missing" && out.finger_lengths[i] != null &&
+              (wl == null || out.finger_lengths[i] > wl)) wl = out.finger_lengths[i];
+        }
+        wrapL = wl;
+      }
+      if (wrapL != null) {
+        out.grip_diameter_inside = roundMM((out.thumb_length + wrapL + out.thumb_thickness) / Math.PI);
+        est.grip_diameter_inside = true;
+      }
+    }
+
+    // v3.1.8: if anything changed since the last build, the STL on
+    // offer is stale. Hide the download until Generate runs again.
+    if (LAST.stl != null && LAST.genSig != null) {
+      var sig = JSON.stringify(out) + "|" + gripIn.value;
+      if (sig !== LAST.genSig) {
+        LAST.stl = null;
+        dlBtn.style.display = "none";
+        genStatsEl.innerHTML += "<p class='hint'>Measurements changed after this build. Click Generate STL again so the shape matches your current numbers.</p>";
+      }
+    }
+    renderResults(out, est);
+  }
+
+  function row(name, v, src, isEst) {
+    return "<tr><td>" + name + (isEst ? " <span class='est'>(est.)</span>" : "") + "</td>"
+      + "<td class='v'>" + (v == null ? "—" : v + " mm") + "</td>"
+      + "<td class='hint'>" + src + "</td></tr>";
+  }
+  function sect(t) { return "<tr><th class='sect' colspan='3'>" + t + "</th></tr>"; }
+
+  function renderResults(out, est) {
+    LAST.out = out; LAST.est = est;
+    var html = "<tr><th>Measurement</th><th>Value</th><th>Source</th></tr>";
+
+    html += sect("Photo 1 · Palm up");
+    html += row("Hand length", out.hand_length,
+      est.hand_length ? "wrist crease to the longest fingertip you have (middle not present)"
+                      : "wrist crease to middle fingertip", est.hand_length);
+    html += row("Palm length", out.palm_length,
+      est.palm_length ? "wrist crease to the base of the longest finger you have"
+                      : "wrist crease to the middle finger's base crease", est.palm_length);
+    var fn = ["index", "middle", "ring", "little"];
+    var FN = ["Index", "Middle", "Ring", "Little"];
+    for (var i = 0; i < 4; i++) {
+      html += (FINGER_STATUS[fn[i]] === "missing")
+        ? row(FN[i] + " finger length", null, "finger not present")
+        : row(FN[i] + " finger length", out.finger_lengths[i],
+              est.finger_lengths[i] ? "average of your other measured finger lengths"
+                                    : "base crease to fingertip", est.finger_lengths[i]);
+    }
+    html += (FINGER_STATUS.thumb === "missing")
+      ? row("Thumb length", null, "thumb not present")
+      : row("Thumb length", out.thumb_length, "thumb fold to tip, straight line");
+
+    html += sect("Photo 2 · Palm down");
+    html += row("Hand breadth", out.hand_breadth, "across the palm, right below the fingers");
+    html += (FINGER_STATUS.thumb === "missing")
+      ? row("Thumb breadth", null, "thumb not present")
+      : row("Thumb breadth", out.thumb_breadth, "across the thumb, thickest point");
+    for (i = 0; i < 4; i++) {
+      html += (FINGER_STATUS[fn[i]] === "missing")
+        ? row(FN[i] + " finger width", null, "finger not present")
+        : row(FN[i] + " finger width", out.finger_widths[i],
+              est.finger_widths[i] ? "average of your other measured finger widths"
+                                   : "across the finger at its lowest knuckle", est.finger_widths[i]);
+    }
+    var WEBN = ["index and middle", "middle and ring", "ring and little"];
+    var WEBF = [["index", "middle"], ["middle", "ring"], ["ring", "little"]];
+    for (var wi = 0; wi < 3; wi++) {
+      var webHidden = FINGER_STATUS[WEBF[wi][0]] === "missing" || FINGER_STATUS[WEBF[wi][1]] === "missing";
+      html += row("Gap between " + WEBN[wi], webHidden ? null : out.web_spaces[wi],
+                  webHidden ? "one of these fingers is not present"
+                            : "the V where the skin joins them");
+    }
+
+    html += sect("Photo 3 · Side view");
+    var ref = tRefIdx();
+    if (FINGER_STATUS[FKEYS[ref]] === "missing") ref = -1;
+    for (i = 0; i < 4; i++) {
+      if (FINGER_STATUS[fn[i]] === "missing") {
+        html += row(FN[i] + " finger thickness", null, "finger not present");
+      } else if (out.finger_thicknesses[i] == null) {
+        html += row(FN[i] + " finger thickness", null, i === ref ? "tap it in photo 3" : "estimated once one thickness is tapped");
+      } else {
+        html += row(FN[i] + " finger thickness", out.finger_thicknesses[i],
+          i === ref ? "measured in photo 3" : "estimated from the finger width", est.finger_thicknesses[i]);
+      }
+    }
+    html += (FINGER_STATUS.thumb === "missing")
+      ? row("Thumb thickness", null, "thumb not present")
+      : row("Thumb thickness", out.thumb_thickness,
+            s2thumbSrc(est.thumb_thickness), est.thumb_thickness);
+    html += (FINGER_STATUS.thumb === "missing")
+      ? row("Grip diameter (inside)", null,
+            "the thumb is not present, so no estimate is possible: type your own value in the Generate section")
+      : row("Grip diameter (inside)", out.grip_diameter_inside,
+            "estimated from other measurements; an override value replaces it", est.grip_diameter_inside);
+
+    var any = out.hand_length != null || out.hand_breadth != null || out.palm_length != null ||
+              out.thumb_length != null || out.finger_lengths.some(function (v) { return v != null; }) ||
+              out.finger_widths.some(function (v) { return v != null; }) ||
+              out.finger_thicknesses.some(function (v) { return v != null; }) ||
+              out.web_spaces.some(function (v) { return v != null; });
+    if (!any) {
+      html += "<tr><td colspan='3' class='hint'>Load a photo, calibrate it, and tap the guided points; values appear here.</td></tr>";
+    }
+    resultsTable.innerHTML = html;
+
+    // JSON
+    if (any) {
+      var e = {};
+      if (est.finger_thicknesses.some(function (v) { return v; })) e.finger_thicknesses = est.finger_thicknesses;
+      if (est.finger_lengths.some(function (v) { return v; })) e.finger_lengths = est.finger_lengths;
+      if (est.finger_widths.some(function (v) { return v; })) e.finger_widths = est.finger_widths;
+      if (est.thumb_thickness) e.thumb_thickness = true;
+      if (est.hand_length) e.hand_length = "reference finger substituted (middle not present)";
+      if (est.palm_length) e.palm_length = "reference finger substituted (middle not present)";
+      if (est.grip_diameter_inside) e.grip_diameter_inside = "estimate; a grip diameter you measured yourself overrides it";
+      var json = {
+        hand_length: out.hand_length,
+        hand_breadth: out.hand_breadth,
+        palm_length: out.palm_length,
+        palm_depth: null,
+        grip_diameter_inside: out.grip_diameter_inside,
+        thumb_length: out.thumb_length,
+        thumb_breadth: out.thumb_breadth,
+        thumb_thickness: out.thumb_thickness,
+        finger_widths: out.finger_widths,
+        finger_lengths: out.finger_lengths,
+        finger_thicknesses: out.finger_thicknesses,
+        web_spaces: out.web_spaces,
+        _estimated: e,
+        _hand: {   // v3.1.7: digit presence as the user set it (the generator ignores this)
+          fingers: { index: FINGER_STATUS.index, middle: FINGER_STATUS.middle,
+                     ring: FINGER_STATUS.ring, little: FINGER_STATUS.little },
+          thumb: FINGER_STATUS.thumb
+        }
+      };
+      jsonOut.value = JSON.stringify(json, null, 2);
+    } else {
+      jsonOut.value = "";
+    }
+
+    // -------------------------------------------------------------
+    // Plausibility warnings
+    // -------------------------------------------------------------
+    var warns = [];
+    if (out.hand_length != null && (out.hand_length < 140 || out.hand_length > 235)) {
+      warns.push("The hand length reads <b>" + out.hand_length + " mm</b>, outside the normal adult range of 140 to 235 mm. "
+        + "Two likely causes:<br>"
+        + "1) <b>Calibration:</b> check that the two tape marks you tapped really have the cm values you entered. "
+        + "Many tapes print inches on one edge; tapping inch numbers while entering cm values shrinks every measurement by 2.54 times.<br>"
+        + "2) <b>Wrist point:</b> the list shows each photo-1 point's position on the tape. "
+        + "Check the wrist entry: it should match where your wrist crease sits on the printed tape (about 0 cm if the "
+        + "tape's zero started there). If it looks like a finger-base position, undo it and tap again.");
+    }
+    if (out.palm_length != null && (out.palm_length < 80 || out.palm_length > 130)) {
+      warns.push("The palm length reads <b>" + out.palm_length + " mm</b>, outside the normal adult range of 80 to 130 mm. "
+        + "Check the tape position of the middle finger's base-crease point, and that the calibration used cm, not inches.");
+    }
+    if (out.hand_breadth != null && (out.hand_breadth < 60 || out.hand_breadth > 110)) {
+      warns.push("The hand breadth reads <b>" + out.hand_breadth + " mm</b>, outside the normal adult range of 60 to 110 mm. "
+        + "Check that the photo-2 calibration used cm (not inches), and that the two palm points sit on opposite outer edges, right below the fingers.");
+    }
+    for (var w = 0; w < 4; w++) {
+      var fw = out.finger_widths[w];
+      if (fw != null && FINGER_STATUS[fn[w]] === "present" && (fw < 13 || fw > 30)) {
+        warns.push("The " + fn[w] + " finger width reads <b>" + fw + " mm</b>, outside 13 to 30 mm. "
+          + "Tap the two side edges again at the finger's lowest knuckle, and check this photo's calibration.");
+      }
+    }
+    var PAIRS = ["index and middle", "middle and ring", "ring and little"];
+    for (w = 0; w < 3; w++) {
+      var ws2 = out.web_spaces[w];
+      if (ws2 != null && (ws2 < 2 || ws2 > 20)) {
+        warns.push("The gap between the " + PAIRS[w] + " fingers reads <b>" + ws2 + " mm</b>, outside 2 to 20 mm. "
+          + "Keep the fingers only slightly apart, and tap the two facing edges right at the V where the skin joins them.");
+      }
+    }
+    for (w = 0; w < 4; w++) {
+      var ft = out.finger_thicknesses[w];
+      if (ft != null && FINGER_STATUS[fn[w]] === "present" && (ft < 12 || ft > 32)) {
+        warns.push("The " + fn[w] + " finger thickness reads <b>" + ft + " mm</b>, outside 12 to 32 mm. "
+          + "Check the photo-3 calibration, and that the two taps are on the top and underside of the same finger.");
+      }
+    }
+
+    var warnBox = document.getElementById("warnBox");
+    if (warns.length) {
+      warnBox.innerHTML = warns.join("<br><br>");
+      warnBox.style.display = "block";
+    } else {
+      warnBox.style.display = "none";
+    }
+  }
+
+  function s2thumbSrc(isEst) {
+    return "estimated from the thumb breadth, or the index thickness";
+  }
+
+  document.getElementById("copyBtn").addEventListener("click", function () {
+    jsonOut.select();
+    try { document.execCommand("copy"); } catch (err) {}
+  });
+
+  // ------------------------------------------------------------------
+  // STL generation (GEN = ported grip_generator_v05.py; output verified
+  // byte-identical against the Python reference build)
+  // ------------------------------------------------------------------
+  var genBtn = document.getElementById("genBtn");
+  var genStatusEl = document.getElementById("genStatus");
+  var genStatsEl = document.getElementById("genStats");
+  var dlBtn = document.getElementById("dlBtn");
+  var sideSel = document.getElementById("sideSel");
+  var gripIn = document.getElementById("gripOverride");
+
+  genBtn.addEventListener("click", function () {
+    if (!LAST.out) {
+      genStatusEl.style.display = "block";
+      genStatusEl.innerHTML = "Measure first: the generator needs every measurement before it can build the handle.";
+      return;
+    }
+    var fields = ["hand_length", "hand_breadth", "palm_length", "palm_depth",
+                  "grip_diameter_inside", "thumb_length", "thumb_breadth",
+                  "thumb_thickness", "finger_widths", "finger_lengths",
+                  "finger_thicknesses", "web_spaces"];
+    var raw = {};
+    for (var fi = 0; fi < fields.length; fi++) raw[fields[fi]] = LAST.out[fields[fi]];
+    LAST.genSig = JSON.stringify(raw) + "|" + gripIn.value;  // v3.1.8 staleness stamp (before the override)
+    var go = parseFloat(gripIn.value);
+    if (isFinite(go) && go > 0) raw.grip_diameter_inside = go;
+    if (raw.grip_diameter_inside == null) {
+      LAST.stl = null;
+      dlBtn.style.display = "none";
+      genStatsEl.innerHTML = "";
+      genStatusEl.style.display = "block";
+      genStatusEl.innerHTML = "<b>Cannot build yet:</b> the grip diameter is missing. "
+        + (FINGER_STATUS.thumb === "missing"
+          ? "Your hand is set to no thumb, so it cannot be estimated from the other measurements. Measure your grip diameter with a separate tool (or around a round object that already feels right) and type it into the override box."
+          : "It is estimated once the thumb and finger taps are done. Finish the guided taps, or type your own measured value into the override box.");
+      return;
+    }
+    LAST.side = sideSel.value;
+    var res;
+    try { res = GEN.generate(raw, LAST.side); }
+    catch (err) { res = { error: "internal error: " + err.message }; }
+    if (res.error) {
+      LAST.stl = null;
+      dlBtn.style.display = "none";
+      genStatsEl.innerHTML = "";
+      genStatusEl.style.display = "block";
+      genStatusEl.innerHTML = "<b>Cannot build yet:</b> " + res.error.replace(/ — /g, "; ");
+      return;
+    }
+    LAST.stl = res.stl;
+    var st = res.stats;
+    genStatusEl.style.display = "none";
+    var volCm3 = (st.volume_mm3 / 1000).toFixed(1);
+    genStatsEl.innerHTML =
+      "<table><tr><th>Build check</th><th>Value</th></tr>"
+      + "<tr><td>Watertight (closed, printable)</td><td class='v'>" + (st.watertight ? "yes" : "no") + "</td></tr>"
+      + "<tr><td>Triangles</td><td class='v'>" + st.triangles + "</td></tr>"
+      + "<tr><td>Volume</td><td class='v'>" + volCm3 + " cm&sup3;</td></tr>"
+      + "<tr><td>Handle length</td><td class='v'>" + st.handle_length_mm + " mm</td></tr>"
+      + "<tr><td>Fits within hand length</td><td class='v'>"
+      + (st.handle_within_hand_length ? "yes" : "<span style='color:#b45309'>no</span>") + "</td></tr>"
+      + "<tr><td>Safety margin</td><td class='v'>" + st.envelope_margin_mm + " mm</td></tr>"
+      + "</table>";
+    dlBtn.style.display = "inline-block";
+  });
+
+  // v3.1.9: restricted in-app viewers may not offer blob object URLs;
+  // fall back to a data URL so the file can still be saved.
+  function bytesToDataURL(data) {
+    var u8 = (data instanceof Uint8Array) ? data : new Uint8Array(data);
+    var CH = 8192, str = "";
+    for (var o = 0; o < u8.length; o += CH) {
+      str += String.fromCharCode.apply(null, u8.subarray(o, Math.min(o + CH, u8.length)));
+    }
+    return "data:application/octet-stream;base64," + btoa(str);
+  }
+  dlBtn.addEventListener("click", function () {
+    if (!LAST.stl) return;
+    var blob = new Blob([LAST.stl], { type: "model/stl" });
+    var url = null;
+    try {
+      if (window.URL && typeof URL.createObjectURL === "function") url = URL.createObjectURL(blob);
+    } catch (err2) { url = null; }
+    if (!url) url = bytesToDataURL(LAST.stl);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "prybar_handle_" + LAST.side + ".stl";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      revokeURL(url);
+      if (a.parentNode) a.parentNode.removeChild(a);
+    }, 2000);
+  });
+
+  // ------------------------------------------------------------------
+  // AI assist: MediaPipe Hand Landmarker -- proposals only; the user
+  // always verifies against the photo and may re-tap any point.
+  // Runs entirely on-device. The preview iframe blocks the CDN load,
+  // which is caught and reported below. Landmark indices:
+  // 0 wrist · 1 thumb CMC · 2 thumb MCP · 3 thumb IP · 4 thumb tip
+  // 5/8 index MCP/tip · 9/12 middle MCP/tip · 13/16 ring MCP/tip · 17/20 little MCP/tip
+  // ------------------------------------------------------------------
+  var aiBtn = document.getElementById("aiBtn");
+  var aiStatusEl = document.getElementById("aiStatus");
+  var aiModelPromise = null;
+
+  function aiSay(html, isErr) {
+    aiStatusEl.innerHTML = html;
+    aiStatusEl.style.color = isErr ? "#7f1d1d" : "#334155";
+    aiStatusEl.style.background = isErr ? "#cfa6a6" : "transparent";
+    aiStatusEl.style.border = isErr ? "1px solid #a03030" : "none";
+    aiStatusEl.style.borderRadius = "0";
+    aiStatusEl.style.padding = isErr ? "8px 10px" : "0";
+  }
+
+  function aiGetModel() {
+    if (!aiModelPromise) {
+      aiModelPromise = (async function () {
+        var CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+        var mod = await import(CDN);
+        var vision = await mod.FilesetResolver.forVisionTasks(CDN + "/wasm");
+        var make = function (delegate) {
+          return mod.HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+              delegate: delegate
+            },
+            runningMode: "IMAGE",
+            numHands: 1
+          });
+        };
+        try { return await make("GPU"); }
+        catch (eGPU) { return await make("CPU"); }
+      })();
+    }
+    return aiModelPromise;
+  }
+
+  function aiPlace(s, key, p) {
+    if (s.pts[key]) return false;
+    var num = 0, items0 = STEP_ITEMS[0];
+    for (var qi = 0; qi < items0.length; qi++) if (items0[qi].key === key) num = qi + 1;
+    var m = addMarker(p.x, p.y, "ai", String(num));
+    s.pts[key] = { p1: { x: p.x, y: p.y }, m1: m };
+    delete s.skipped[key];
+    var ownA = ITEM_FINGERS[key];
+    if (ownA && ownA.length === 1) SKIP_ASKED[ownA[0]] = false;
+    return true;
+  }
+
+  aiBtn.addEventListener("click", async function () {
+    var s = steps[cur];
+    if (!s.hasPhoto) { aiSay("Load this step's photo first.", true); return; }
+    if (cur !== 0) return;  // the AI block is only shown for photo 1
+    aiBtn.disabled = true;
+    aiSay("Loading the hand-landmark model (first use only, ~10 MB)…", false);
+    var model;
+    try { model = await aiGetModel(); }
+    catch (err) {
+      aiBtn.disabled = false;
+      aiSay("Could not load the AI model. This is expected inside the chat preview, which blocks downloads from other sites. Download this page and open it in your browser; the button then works (internet needed the first time).", true);
+      return;
+    }
+    var res;
+    try { res = model.detect(photo); }
+    catch (err) {
+      aiBtn.disabled = false;
+      aiSay("The AI could not read this photo. Tap the points yourself.", true);
+      return;
+    }
+    if (!res.landmarks || !res.landmarks.length) {
+      aiBtn.disabled = false;
+      aiSay("No hand found in this photo. Make sure the whole hand is in frame, well lit, and not blurred; then try again, or tap the points yourself.", true);
+      return;
+    }
+    var LM = res.landmarks[0];
+    function px(i) { return { x: LM[i].x * s.iw, y: LM[i].y * s.ih }; }
+    var wr = px(0);
+    // First real run (validated against calipers): the MCP knuckle landmarks
+    // already land on the lowest base creases in the palm-up pose; no shift needed.
+    function thumbBase() {  // basal fold sits a little toward the palm from the thumb knuckle
+      var p = px(2), q = px(1);
+      return { x: p.x + (q.x - p.x) * 0.30, y: p.y + (q.y - p.y) * 0.30 };
+    }
+    var MAP = [
+      ["wrist", wr],
+      ["index_base", px(5)], ["index_tip", px(8)],
+      ["middle_base", px(9)], ["middle_tip", px(12)],
+      ["ring_base", px(13)], ["ring_tip", px(16)],
+      ["little_base", px(17)], ["little_tip", px(20)],
+      ["thumb_base", thumbBase()], ["thumb_tip", px(4)]
+    ];
+    var placed = 0, already = 0;
+    for (var mi = 0; mi < MAP.length; mi++) {
+      if (keyHidden(0, MAP[mi][0])) continue;  // digit marked missing
+      if (s.pts[MAP[mi][0]]) { already++; continue; }
+      if (aiPlace(s, MAP[mi][0], MAP[mi][1])) placed++;
+    }
+    markCurrent(null);
+    advance();
+    setMode("meas");  // switch to Measure so button B highlights and the measure block tints
+    var hsets = res.handednesses || res.handedness || [];
+    var hand = (hsets.length && hsets[0].length) ? hsets[0][0].categoryName : "";
+    var msg = "<b>AI placed " + placed + " point" + (placed === 1 ? "" : "s") + "</b> (teal, numbered like the list)"
+      + (already ? "; " + already + " point" + (already === 1 ? " you already tapped was" : "s you already tapped were") + " left alone" : "") + "."
+      + "<br>The dots sit on the finger joints; for most hands the finger-base dots land right on the lowest creases. Check each finger base and the thumb fold that appears in your list against the photo, then drag any dot to fine-tune it (dragging an AI dot turns it green, which means you have checked it). To start over on one point, click its line in the list."
+      + (hand ? "<br>Detected a <b>" + String(hand).toLowerCase() + "</b> hand as photographed; cameras can mirror photos, so set Right or Left yourself in the Generate section." : "")
+      + (calOK(s) ? "" : "<br>Calibrate the tape (button A) to turn the dots into measurements.");
+    var hl = projMm(s, wr, px(12));
+    if (hl != null && (hl < 100 || hl > 260)) {
+      msg += "<br><b>Warning:</b> the wrist to middle fingertip distance reads " + Math.round(hl) + " mm with this calibration; the AI dots may be misplaced (phones sometimes store photos with rotation data). If the dots look wrong, take the photo again or tap the points yourself.";
+      aiSay(msg, true);
+    } else {
+      aiSay(msg, false);
+    }
+    aiBtn.disabled = false;
+  });
+
+  // ------------------------------------------------------------------
+  // Init
+  // ------------------------------------------------------------------
+  showStep(0);
+})();
+</script>
+</body>
+</html>
