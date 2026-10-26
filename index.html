@@ -275,8 +275,8 @@
 </div>
 
 <script>
-/* Evertonians prybar handle generator v0.8 -- JavaScript port of
- * grip_generator_v08.py.  The handle is the user's own smoothed hand
+/* Evertonians prybar handle generator v0.9 -- JavaScript port of
+ * grip_generator_v09.py.  The handle is the user's own smoothed hand
  * scan (embedded below as the "TG06" template blob), warped per hand
  * input: axial segment scales from the finger row spacing, radial
  * scale from the grip diameter, groove depths from the finger
@@ -288,10 +288,14 @@
  * longer measured: ridge spacing now scales with the grip diameter,
  * so hand JSONs that still contain web_spaces are accepted and
  * ignored.  v0.8: finger groove bands are 50% wider by DEFAULT
- * (grooveWiden default 1.5), each groove's floor (deepest strip) is
- * stretched 40% wider around its per-row dent minimum, and the back
- * end (non-thumb side) is capped with a clean 12 mm dome instead of
- * the ragged scan taper.  The reference hand reproduces the smoothed
+ * (grooveWiden default 1.5) and each groove's floor (deepest strip)
+ * is stretched 40% wider around its per-row dent minimum.  v0.9: the
+ * groove-zone mesh is tangentially relaxed (equalises the scan's
+ * uneven axial vertex spacing), a final radius-field Jacobi pass
+ * rounds the last facet-level transitions, and the back end is a
+ * TRUE HEMISPHERE per angular ray (radius = body radius sampled at
+ * DOME_REF_X = 45.5 in the flat zone, clamped to [8, 24] mm)
+ * replacing the v0.8 12 mm blended dome.  The reference hand reproduces the smoothed
  * template exactly outside the dome zone (all ratios are exactly 1).
  * v0.5.5 missing / shortened finger support carries over: a null
  * finger_lengths entry = finger not present (its groove is
@@ -327,10 +331,15 @@ var GEN = (function () {
     DEFAULT_GROOVE_WIDEN: 1.5,  // v0.8: bands 50% wider by default
     FLOOR_FRAC: 0.25,      // v0.8: floor window = central half of band
     FLOOR_WIDEN: 1.4,      // v0.8: floor window stretched 40% wider
-    DOME_LEN: 12.0,        // v0.8: back dome length, template mm
-    DOME_FADE: 0.25        // v0.8: dome blend fraction (3 mm)
+    RELAX_PASSES: 4,       // v0.9: tangential Jacobi passes (groove zone)
+    RELAX_LAMBDA: 0.5,     // v0.9: relaxation step
+    FS_PASSES: 4,          // v0.9: final radius-field Jacobi passes
+    FS_LAMBDA: 0.4,        // v0.9: final smoothing strength
+    DOME_REF_X: 45.5,      // v0.9: body radius sampling x (flat zone, mm)
+    DOME_RMIN: 8.0,        // v0.9: hemisphere radius clamp (mm)
+    DOME_RMAX: 24.0        // v0.9: hemisphere radius clamp (mm)
   };
-  var STL_HEADER = "evertonians handle v0.8";
+  var STL_HEADER = "evertonians handle v0.9";
   var FINGERS = ["index", "middle", "ring", "pinkie"];
 
   // ----------------------------------------------------------------
@@ -664,11 +673,14 @@ var GEN = (function () {
           vz[i] = cc2[1] + (vz[i] - cc2[1]) * sc;
         }
       }
+      T_smWv = wv;
+      T_nbr = nbr;
     }
 
     var gw = grooveRowWeights();
     var gWrow = gw[0], gCenter = gw[1];
     var rowZoneW = thetaZoneWeights(gWrow);
+    var T_smWv = null, T_nbr = null;
     smoothTemplateVerts();
 
     var maxHyp = 0.0;
@@ -699,7 +711,8 @@ var GEN = (function () {
       anchorsG: TEMPLATE_META.anchors.g,
       spanLo: TEMPLATE_META.thumb.span_lo, spanHi: TEMPLATE_META.thumb.span_hi,
       xsLo: TEMPLATE_META.thumb.xs_lo, xsHi: TEMPLATE_META.thumb.xs_hi,
-      gWrow: gWrow, gCenter: gCenter, rowZoneW: rowZoneW
+      gWrow: gWrow, gCenter: gCenter, rowZoneW: rowZoneW,
+      smWv: T_smWv, nbr: T_nbr
     };
   }());
 
@@ -1153,7 +1166,29 @@ var GEN = (function () {
 
     var loRow = spanLo - 6, hiRow = spanHi + 6;
     var xLo = xsLo - K.THUMB_BLEND, xHi = xsHi + K.THUMB_BLEND;
-    var xDomeLo = T.tipHi - K.DOME_LEN;
+
+    // ---- v0.9: tangential relaxation of the groove-zone axial
+    // spacing (equalises the scan's uneven vertex x-spacing; the
+    // radius is re-blended from the grid at the relaxed x below).
+    // Jacobi, ascending vertex order, same as the Python. ----
+    var smWv = T.smWv, nbr = T.nbr;
+    var px = new Float64Array(T.vx);
+    for (var pr = 0; pr < K.RELAX_PASSES; pr++) {
+      var px2 = new Float64Array(px);
+      for (var pi = 0; pi < nv; pi++) {
+        var pw = smWv[pi];
+        if (pw > 0.0) {
+          var pnb = nbr[pi];
+          if (pnb.length > 0) {
+            var ps = 0.0;
+            for (var pq = 0; pq < pnb.length; pq++) ps += px[pnb[pq]];
+            px2[pi] = px[pi] + K.RELAX_LAMBDA * pw
+              * (ps / pnb.length - px[pi]);
+          }
+        }
+      }
+      px = px2;
+    }
 
     var rowMaps = grooveRowMaps(T, L);
     var ds = null, nds = 0;
@@ -1171,8 +1206,12 @@ var GEN = (function () {
 
     var vx = new Float64Array(nv), vy = new Float64Array(nv),
         vz = new Float64Array(nv);
+    var cys = new Float64Array(nv), czs = new Float64Array(nv);
+    var dys = new Float64Array(nv), dzs = new Float64Array(nv);
+    var rs = new Float64Array(nv), rfs = new Float64Array(nv);
+    var xs = new Float64Array(nv);
     for (var i = 0; i < nv; i++) {
-      var x = T.vx[i], y = T.vy[i], z = T.vz[i];
+      var x = px[i], y = T.vy[i], z = T.vz[i];
       var q = T.tq[i];
       var th = q * 0.01;
       var krow = Math.floor(q / 200);
@@ -1195,6 +1234,17 @@ var GEN = (function () {
       var cy = cc[0], cz = cc[1];
       var dy = y - cy, dz = z - cz;
       var r = Math.sqrt(dy * dy + dz * dz);
+      var wsm = smWv[i];
+      if (wsm > 0.0) {
+        var rg = sampleGrid(T.grid, x, th);
+        var ru2 = r + wsm * (rg - r);
+        if (r > 1e-9) {
+          var sc = ru2 / r;
+          dy = dy * sc;
+          dz = dz * sc;
+        }
+        r = ru2;
+      }
 
       var rfin;
       if (reg >= 0) {
@@ -1291,20 +1341,27 @@ var GEN = (function () {
         }
       }
 
-      // ---- v0.8 back dome (non-thumb end): clean ellipsoidal cap ----
-      if (x >= xDomeLo) {
-        var du = (x - xDomeLo) / K.DOME_LEN;
-        if (du > 1.0) du = 1.0;
-        var dw = smooth01(du / K.DOME_FADE);
-        if (dw > 0.0) {
-          var uu = 1.0 - du * du;
-          if (uu < 0.0) uu = 0.0;
-          var r0 = sampleGrid(T.grid, xDomeLo, th);
-          rfin = rfin + dw * (r0 * Math.sqrt(uu) - rfin);
+      // ---- v0.9 hemispherical back cap (non-thumb end): a true
+      // half-ball per angular ray, radius = body radius sampled in
+      // the flat zone; overrides everything past its equator and
+      // skips the widening displacement so the sphere is exact ----
+      var inDome = false;
+      var u = T.tipHi - x;
+      if (u < K.DOME_RMAX) {
+        var r0 = sampleGrid(T.grid, K.DOME_REF_X, th);
+        if (r0 < K.DOME_RMIN) r0 = K.DOME_RMIN;
+        if (r0 > K.DOME_RMAX) r0 = K.DOME_RMAX;
+        if (u < 0.0) u = 0.0;
+        if (u < r0) {
+          var uu = 2.0 * r0 * u - u * u;
+          rfin = Math.sqrt(uu);
+          inDome = true;
         }
       }
 
-      if (ds !== null) {
+      // ---- v0.9: stash per-vertex placement state (the final
+      // radius field is smoothed below, then the vertex is placed) --
+      if (ds !== null && !inDome) {
         var dl = ds[krow];
         if (dl !== null) {
           var fD = xd / K.DS_STEP;
@@ -1315,12 +1372,50 @@ var GEN = (function () {
           x = tip + (xd + dl[j0] * (1.0 - fxD) + dl[j0 + 1] * fxD) * 0.05;
         }
       }
-      var xn = warpX(L, x);
-      var nr = R * rfin;
-      var ratio = nr / r;
-      vx[i] = xn;
-      vy[i] = R * cy + dy * ratio;
-      vz[i] = R * cz + dz * ratio;
+      cys[i] = cy;
+      czs[i] = cz;
+      dys[i] = dy;
+      dzs[i] = dz;
+      rs[i] = r;
+      rfs[i] = rfin;
+      xs[i] = x;
+    }
+
+    // ---- v0.9 final-field smoothing: a Jacobi pass over the
+    // finished radius field inside the groove + thumb zone, rounding
+    // the last facet-level transitions.  Zone-weighted, Jacobi,
+    // ascending vertex order, mirrored exactly by the Python. ----
+    for (var fp = 0; fp < K.FS_PASSES; fp++) {
+      var rf2 = new Float64Array(rfs);
+      for (var fi = 0; fi < nv; fi++) {
+        var fw = smWv[fi];
+        if (fw > 0.0) {
+          var fnb = nbr[fi];
+          if (fnb.length > 0) {
+            var fs2 = 0.0;
+            for (var fq = 0; fq < fnb.length; fq++) fs2 += rfs[fnb[fq]];
+            rf2[fi] = rfs[fi] + K.FS_LAMBDA * fw
+              * (fs2 / fnb.length - rfs[fi]);
+          }
+        }
+      }
+      rfs = rf2;
+    }
+
+    for (var i2 = 0; i2 < nv; i2++) {
+      var x2 = xs[i2];
+      var cy2 = cys[i2];
+      var cz2 = czs[i2];
+      var dy2 = dys[i2];
+      var dz2 = dzs[i2];
+      var r2v = rs[i2];
+      var rfin2 = rfs[i2];
+      var xn = warpX(L, x2);
+      var nr = R * rfin2;
+      var ratio = nr / r2v;
+      vx[i2] = xn;
+      vy[i2] = R * cy2 + dy2 * ratio;
+      vz[i2] = R * cz2 + dz2 * ratio;
     }
 
     var tris;
@@ -1433,6 +1528,22 @@ var GEN = (function () {
       template_row_span: [T.spanLo, T.spanHi],
       template_dent_mm: r2(T.dentT)
     };
+    var dlo = 1e9, dhi = -1e9;
+    for (var dk = 0; dk < T.nt; dk++) {
+      var r0d = sampleGrid(T.grid, K.DOME_REF_X, dk * 2.0);
+      if (r0d < K.DOME_RMIN) r0d = K.DOME_RMIN;
+      if (r0d > K.DOME_RMAX) r0d = K.DOME_RMAX;
+      if (r0d < dlo) dlo = r0d;
+      if (r0d > dhi) dhi = r0d;
+    }
+    var backDome = {
+      type: "hemisphere",
+      ref_x_mm: K.DOME_REF_X,
+      radius_min_mm: r2(dlo),
+      radius_max_mm: r2(dhi),
+      equator_x_mm: [r2(T.tipHi - dhi), r2(T.tipHi - dlo)],
+      tip_x_mm: T.tipHi
+    };
     return {
       vertices: nv, triangles: ntri,
       watertight: watertight, volume_mm3: Math.round(vol * 10) / 10,
@@ -1444,7 +1555,15 @@ var GEN = (function () {
       handle_within_hand_length: L.withinHand,
       groove_widen: L.grooveWiden,
       groove_audit: grooves, thumb_audit: thumb,
-      axis: "forked dome (thumb side) at x=0 to domed back cap; smoothed template geometry, warped per hand (v0.8)"
+      back_dome: backDome,
+      mesh_relax: {
+        passes: K.RELAX_PASSES,
+        lambda: K.RELAX_LAMBDA,
+        final_field_passes: K.FS_PASSES,
+        final_field_lambda: K.FS_LAMBDA,
+        zone: "groove + thumb (v0.7 weights)"
+      },
+      axis: "forked dome (thumb side) at x=0 to hemispherical back cap; smoothed template geometry, warped per hand (v0.9)"
     };
   }
 
@@ -2611,19 +2730,20 @@ var GEN = (function () {
   });
 
   // ------------------------------------------------------------------
-  // STL generation (GEN = ported grip_generator_v08.py; output verified
+  // STL generation (GEN = ported grip_generator_v09.py; output verified
   // byte-identical against the Python reference build)
-  // v3.4.0: the generator shapes the handle from the user's own
+  // v3.5.0: the generator shapes the handle from the user's own
   // smoothed hand-scan template (embedded in the GEN block). All
   // scallop grooves and the thumb scoop come from the scanned shape,
   // scaled to the measured hand; each groove's band width follows its
   // finger's own measured width and its angular wrap follows that
   // finger's own length. v0.8: finger grooves are 50% wider by
-  // default, each groove's floor (its deepest strip) is 40% wider,
-  // and the back end (opposite the thumb scoop) is capped with a
-  // clean dome. Web spaces are no longer measured: the ridge spacing
-  // now scales with the grip diameter. Missing fingers still get no
-  // groove.
+  // default, each groove's floor (its deepest strip) is 40% wider.
+  // v0.9: the groove mesh is relaxed and the finished radius field is
+  // smoothed for clean facets, and the back end (opposite the thumb
+  // scoop) is a true hemisphere that meets the shaft at its equator.
+  // Web spaces are no longer measured: the ridge spacing now scales
+  // with the grip diameter. Missing fingers still get no groove.
   // ------------------------------------------------------------------
   var genBtn = document.getElementById("genBtn");
   var genStatusEl = document.getElementById("genStatus");
