@@ -275,8 +275,8 @@
 </div>
 
 <script>
-/* Evertonians prybar handle generator v0.10 -- JavaScript port of
- * grip_generator_v10.py.  The handle is the user's own smoothed hand
+/* Evertonians prybar handle generator v0.11 -- JavaScript port of
+ * grip_generator_v11.py.  The handle is the user's own smoothed hand
  * scan (embedded below as the "TG06" template blob), warped per hand
  * input: axial segment scales from the finger row spacing, radial
  * scale from the grip diameter, groove depths from the finger
@@ -291,13 +291,19 @@
  * (grooveWiden default 1.5) and each groove's floor (deepest strip)
  * is stretched 40% wider around its per-row dent minimum.  v0.10: the
  * back cap is REMOVED ENTIRELY (no dome, no hemisphere -- the back
- * end is the scanned template's own taper), and the mesh relaxation
- * plus the final radius-field Jacobi smoothing are FINGER-GROOVES-
- * ONLY (the thumb scoop zone is excluded from every build-stage
- * smoothing weight, so the thumb keeps exactly its template shape)
- * and strengthened (FS_PASSES 6, FS_LAMBDA 0.5).  The reference hand
- * reproduces the smoothed template exactly outside the finger zone
- * (all ratios are exactly 1).
+ * end is the scanned template's own taper), and the final radius-
+ * field Jacobi smoothing is FINGER-GROOVES-ONLY (the thumb scoop zone
+ * is excluded from every build-stage smoothing weight, so the thumb
+ * keeps exactly its template shape) and strengthened (FS_PASSES 6,
+ * FS_LAMBDA 0.5).  v0.11: the mesh is re-tessellated on the template
+ * grid's own REGULAR LATTICE (239 stations x 180 columns + 2 conical
+ * cap apexes, 86,040 uniform triangles) sampling the SAME organic
+ * scan field -- the irregular scan triangulation (0.04-2.4 mm
+ * triangles, noisy normals) read as bumps and jagged edges in every
+ * mesh viewer; the v0.9/v0.10 tangential mesh relaxation is gone
+ * with it.  The reference hand reproduces the smoothed lattice
+ * template exactly outside the finger zone (all ratios are exactly
+ * 1).
  * v0.5.5 missing / shortened finger support carries over: a null
  * finger_lengths entry = finger not present (its groove is
  * chord-filled); a null thumb_length = no thumb (the scoop is
@@ -332,12 +338,10 @@ var GEN = (function () {
     DEFAULT_GROOVE_WIDEN: 1.5,  // v0.8: bands 50% wider by default
     FLOOR_FRAC: 0.25,      // v0.8: floor window = central half of band
     FLOOR_WIDEN: 1.4,      // v0.8: floor window stretched 40% wider
-    RELAX_PASSES: 4,       // v0.10: tangential Jacobi passes (finger zone)
-    RELAX_LAMBDA: 0.5,     // v0.10: relaxation step
-    FS_PASSES: 6,          // v0.10: final radius-field Jacobi passes
-    FS_LAMBDA: 0.5         // v0.10: final smoothing strength
+    FS_PASSES: 6,          // v0.11: final radius-field Jacobi passes
+    FS_LAMBDA: 0.5         // v0.11: final smoothing strength
   };
-  var STL_HEADER = "evertonians handle v0.10";
+  var STL_HEADER = "evertonians handle v0.11";
   var FINGERS = ["index", "middle", "ring", "pinkie"];
 
   // ----------------------------------------------------------------
@@ -697,6 +701,71 @@ var GEN = (function () {
       T_smWvF = wvF;
       T_nbr = nbr;
     }
+
+    // ---- v0.11: regular-lattice re-tessellation.  The organic
+    // radius field (box-blurred scan grid) is unchanged; the
+    // irregular scan mesh topology (0.04-2.4 mm triangles, noisy
+    // vertex normals that read as bumps/jagged edges in flat-shaded
+    // viewers) is replaced by the template grid's own lattice: 239
+    // stations x 180 columns, plus two conical end closures at the
+    // scan tips (the scan's own closing layers beyond the grid
+    // spanned < 0.5 mm). ----
+    var L_NV = nst * nt + 2;
+    var L_VX = new Float64Array(L_NV);
+    var L_VY = new Float64Array(L_NV);
+    var L_VZ = new Float64Array(L_NV);
+    var L_TQ = new Uint16Array(L_NV);
+    for (var s2 = 0; s2 < nst; s2++) {
+      var xs_ = TEMPLATE_META.x0 + s2 * TEMPLATE_META.step;
+      var cy_ = cyf[s2];
+      var cz_ = czf[s2];
+      for (var k3 = 0; k3 < nt; k3++) {
+        var i3 = s2 * nt + k3;
+        var th_ = k3 * 2.0;
+        var r_ = grid[s2 * nt + k3];
+        var a_ = th_ * 0.017453292519943295;
+        L_VX[i3] = xs_;
+        L_VY[i3] = cy_ + r_ * Math.cos(a_);
+        L_VZ[i3] = cz_ + r_ * Math.sin(a_);
+        L_TQ[i3] = Math.floor(th_ * 100.0);
+      }
+    }
+    for (var cap = 0; cap < 2; cap++) {
+      var i4 = nst * nt + cap;
+      var cx_ = cap === 0 ? TEMPLATE_META.x_tip_lo : TEMPLATE_META.x_tip_hi;
+      var s3 = cap === 0 ? 0 : nst - 1;
+      L_VX[i4] = cx_;
+      L_VY[i4] = cyf[s3];
+      L_VZ[i4] = czf[s3];
+      L_TQ[i4] = 0;
+    }
+    var L_TRIS = [];
+    for (var s4 = 0; s4 < nst - 1; s4++) {
+      for (var k4 = 0; k4 < nt; k4++) {
+        var k2l = k4 + 1 < nt ? k4 + 1 : 0;
+        var a2 = s4 * nt + k4;
+        var b2 = (s4 + 1) * nt + k4;
+        var c2 = (s4 + 1) * nt + k2l;
+        var d2 = s4 * nt + k2l;
+        L_TRIS.push(a2, c2, b2);
+        L_TRIS.push(a2, d2, c2);
+      }
+    }
+    var capA = nst * nt;
+    var capB = nst * nt + 1;
+    for (k4 = 0; k4 < nt; k4++) {
+      var k22 = k4 + 1 < nt ? k4 + 1 : 0;
+      L_TRIS.push(capA, k4, k22);
+      var s5 = nst - 1;
+      L_TRIS.push(capB, s5 * nt + k22, s5 * nt + k4);
+    }
+    nv = L_NV;
+    ntri = L_TRIS.length / 3;
+    vx = L_VX;
+    vy = L_VY;
+    vz = L_VZ;
+    tq = L_TQ;
+    tris = new Uint16Array(L_TRIS);
 
     var gw = grooveRowWeights();
     var gWrow = gw[0], gCenter = gw[1];
@@ -1190,29 +1259,11 @@ var GEN = (function () {
     var loRow = spanLo - 6, hiRow = spanHi + 6;
     var xLo = xsLo - K.THUMB_BLEND, xHi = xsHi + K.THUMB_BLEND;
 
-    // ---- v0.10: tangential relaxation of the FINGER-zone axial
-    // spacing (thumb excluded; equalises the scan's uneven vertex
-    // x-spacing; the radius is re-blended from the grid at the
-    // relaxed x below).  Jacobi, ascending vertex order, same as the
-    // Python. ----
+    // ---- v0.11: the lattice is uniform by construction; the v0.10
+    // tangential relaxation of the scan mesh's uneven x-spacing is
+    // no longer needed. ----
     var smWv = T.smWvF, nbr = T.nbr;
-    var px = new Float64Array(T.vx);
-    for (var pr = 0; pr < K.RELAX_PASSES; pr++) {
-      var px2 = new Float64Array(px);
-      for (var pi = 0; pi < nv; pi++) {
-        var pw = smWv[pi];
-        if (pw > 0.0) {
-          var pnb = nbr[pi];
-          if (pnb.length > 0) {
-            var ps = 0.0;
-            for (var pq = 0; pq < pnb.length; pq++) ps += px[pnb[pq]];
-            px2[pi] = px[pi] + K.RELAX_LAMBDA * pw
-              * (ps / pnb.length - px[pi]);
-          }
-        }
-      }
-      px = px2;
-    }
+    var px = T.vx;
 
     var rowMaps = grooveRowMaps(T, L);
     var ds = null, nds = 0;
@@ -1258,6 +1309,17 @@ var GEN = (function () {
       var cy = cc[0], cz = cc[1];
       var dy = y - cy, dz = z - cz;
       var r = Math.sqrt(dy * dy + dz * dz);
+      if (r <= 1e-9) {
+        // v0.11 cap apex: keep it on the centerline, no field math
+        cys[i] = cy;
+        czs[i] = cz;
+        dys[i] = 0.0;
+        dzs[i] = 0.0;
+        rs[i] = 0.0;
+        rfs[i] = 0.0;
+        xs[i] = x;
+        continue;
+      }
       var wsm = smWv[i];
       if (wsm > 0.0) {
         var rg = sampleGrid(T.grid, x, th);
@@ -1293,17 +1355,23 @@ var GEN = (function () {
           var kf = 1.0 + (kG[reg] - 1.0) * ke;
           rfin = rd - (rd - ru) * kf;
         } else {
-          // missing finger: chord-fill the dent window
+          // missing finger: chord-fill the dent window (a zero-width
+          // mask window -- possible at single angular rows on the
+          // v0.11 lattice -- has nothing to fill)
           var lo = tip + mlo * 0.05;
           var hi = tip + mhi * 0.05;
-          var s = (x - lo) / (hi - lo);
-          var glo = sampleGrid(T.grid, lo, th);
-          var ghi = sampleGrid(T.grid, hi, th);
-          var chord = glo + (ghi - glo) * s;
-          var m = s;
-          if (1.0 - s < m) m = 1.0 - s;
-          m = smooth01(m / K.EDGE_BLEND);
-          rfin = r + (chord - r) * m;
+          if (hi > lo) {
+            var s = (x - lo) / (hi - lo);
+            var glo = sampleGrid(T.grid, lo, th);
+            var ghi = sampleGrid(T.grid, hi, th);
+            var chord = glo + (ghi - glo) * s;
+            var m = s;
+            if (1.0 - s < m) m = 1.0 - s;
+            m = smooth01(m / K.EDGE_BLEND);
+            rfin = r + (chord - r) * m;
+          } else {
+            rfin = r;
+          }
         }
       } else {
         var ru = r, w = 0.0;
@@ -1346,17 +1414,22 @@ var GEN = (function () {
               rfin = ru;
             }
           } else if (inScoop) {
-            // no thumb: chord-fill the scoop
+            // no thumb: chord-fill the scoop (zero-width mask window,
+            // single angular row on the v0.11 lattice: nothing to fill)
             var lo2 = tip + tlo * 0.05;
             var hi2 = tip + thi * 0.05;
-            var s2 = (x - lo2) / (hi2 - lo2);
-            var glo2 = sampleGrid(T.grid, lo2, th);
-            var ghi2 = sampleGrid(T.grid, hi2, th);
-            var chord2 = glo2 + (ghi2 - glo2) * s2;
-            var m2 = s2;
-            if (1.0 - s2 < m2) m2 = 1.0 - s2;
-            m2 = smooth01(m2 / K.EDGE_BLEND);
-            rfin = r + (chord2 - r) * m2;
+            if (hi2 > lo2) {
+              var s2 = (x - lo2) / (hi2 - lo2);
+              var glo2 = sampleGrid(T.grid, lo2, th);
+              var ghi2 = sampleGrid(T.grid, hi2, th);
+              var chord2 = glo2 + (ghi2 - glo2) * s2;
+              var m2 = s2;
+              if (1.0 - s2 < m2) m2 = 1.0 - s2;
+              m2 = smooth01(m2 / K.EDGE_BLEND);
+              rfin = r + (chord2 - r) * m2;
+            } else {
+              rfin = r;
+            }
           } else {
             rfin = r;
           }
@@ -1421,10 +1494,15 @@ var GEN = (function () {
       var rfin2 = rfs[i2];
       var xn = warpX(L, x2);
       var nr = R * rfin2;
-      var ratio = nr / r2v;
       vx[i2] = xn;
-      vy[i2] = R * cy2 + dy2 * ratio;
-      vz[i2] = R * cz2 + dz2 * ratio;
+      if (r2v > 1e-9) {
+        var ratio = nr / r2v;
+        vy[i2] = R * cy2 + dy2 * ratio;
+        vz[i2] = R * cz2 + dz2 * ratio;
+      } else {
+        vy[i2] = R * cy2;
+        vz[i2] = R * cz2;
+      }
     }
 
     var tris;
@@ -1549,13 +1627,13 @@ var GEN = (function () {
       groove_widen: L.grooveWiden,
       groove_audit: grooves, thumb_audit: thumb,
       mesh_relax: {
-        passes: K.RELAX_PASSES,
-        lambda: K.RELAX_LAMBDA,
+        mesh: "regular lattice (0.5 mm x 2 deg; v0.11 re-tessellation "
+              + "of the same scan field)",
         final_field_passes: K.FS_PASSES,
         final_field_lambda: K.FS_LAMBDA,
         zone: "finger grooves only (v0.7 groove supports; thumb excluded)"
       },
-      axis: "forked dome (thumb side) at x=0 to the scanned back taper; smoothed template geometry, warped per hand (v0.10)"
+      axis: "forked dome (thumb side) at x=0 to the scanned back taper; smoothed template geometry, warped per hand (v0.11 regular-lattice mesh)"
     };
   }
 
@@ -2722,19 +2800,20 @@ var GEN = (function () {
   });
 
   // ------------------------------------------------------------------
-  // STL generation (GEN = ported grip_generator_v10.py; output verified
+  // STL generation (GEN = ported grip_generator_v11.py; output verified
   // byte-identical against the Python reference build)
-  // v3.6.0: the generator shapes the handle from the user's own
+  // v3.7.0: the generator shapes the handle from the user's own
   // smoothed hand-scan template (embedded in the GEN block). All
   // scallop grooves and the thumb scoop come from the scanned shape,
   // scaled to the measured hand; each groove's band width follows its
   // finger's own measured width and its angular wrap follows that
   // finger's own length. v0.8: finger grooves are 50% wider by
   // default, each groove's floor (its deepest strip) is 40% wider.
-  // v0.10: the finger-groove mesh is relaxed and the finished radius
-  // field is Jacobi-smoothed for clean facets (the thumb scoop is
-  // untouched); the back end (opposite the thumb scoop) is the scanned
-  // template's own taper, with no added cap.
+  // v0.11: the mesh is re-tessellated on a uniform 0.5 mm x 2 degree
+  // lattice sampling the same scanned field, so every viewer shows
+  // smooth, bump-free facets (the organic scallop and thumb-scoop
+  // shapes are unchanged); the back end (opposite the thumb scoop) is
+  // the scanned template's own taper, with no added cap.
   // Web spaces are no longer measured: the ridge spacing now scales
   // with the grip diameter. Missing fingers still get no groove.
   // ------------------------------------------------------------------
