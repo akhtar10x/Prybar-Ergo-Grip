@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -276,8 +275,8 @@
 </div>
 
 <script>
-/* Evertonians prybar handle generator v0.7 -- JavaScript port of
- * grip_generator_v07.py.  The handle is the user's own smoothed hand
+/* Evertonians prybar handle generator v0.8 -- JavaScript port of
+ * grip_generator_v08.py.  The handle is the user's own smoothed hand
  * scan (embedded below as the "TG06" template blob), warped per hand
  * input: axial segment scales from the finger row spacing, radial
  * scale from the grip diameter, groove depths from the finger
@@ -288,12 +287,17 @@
  * radial Laplacian pass in the groove zone only).  Web spaces are no
  * longer measured: ridge spacing now scales with the grip diameter,
  * so hand JSONs that still contain web_spaces are accepted and
- * ignored.  The reference hand reproduces the smoothed template
- * exactly (all ratios are exactly 1).  v0.5.5 missing / shortened
- * finger support carries over: a null finger_lengths entry = finger
- * not present (its groove is chord-filled); a null thumb_length = no
- * thumb (the scoop is chord-filled); null widths / thicknesses are
- * filled from the measured fingers.
+ * ignored.  v0.8: finger groove bands are 50% wider by DEFAULT
+ * (grooveWiden default 1.5), each groove's floor (deepest strip) is
+ * stretched 40% wider around its per-row dent minimum, and the back
+ * end (non-thumb side) is capped with a clean 12 mm dome instead of
+ * the ragged scan taper.  The reference hand reproduces the smoothed
+ * template exactly outside the dome zone (all ratios are exactly 1).
+ * v0.5.5 missing / shortened finger support carries over: a null
+ * finger_lengths entry = finger not present (its groove is
+ * chord-filled); a null thumb_length = no thumb (the scoop is
+ * chord-filled); null widths / thicknesses are filled from the
+ * measured fingers.
  * Port verified against the Python reference build: byte-identical
  * STL output.  Self-contained: no dependencies, plain browser
  * JavaScript; the base64 blob is decoded with a manual decoder (no
@@ -319,9 +323,14 @@ var GEN = (function () {
     DS_STEP: 5.0,          // displacement lattice step (xd = 0.25 mm)
     DS_BLUR_X: 8,          // displacement blur radius (lattice samples)
     DS_PASSES: 2,          // displacement blur passes
-    DS_THETA_BLUR: 2       // displacement theta blur radius (rows)
+    DS_THETA_BLUR: 2,      // displacement theta blur radius (rows)
+    DEFAULT_GROOVE_WIDEN: 1.5,  // v0.8: bands 50% wider by default
+    FLOOR_FRAC: 0.25,      // v0.8: floor window = central half of band
+    FLOOR_WIDEN: 1.4,      // v0.8: floor window stretched 40% wider
+    DOME_LEN: 12.0,        // v0.8: back dome length, template mm
+    DOME_FADE: 0.25        // v0.8: dome blend fraction (3 mm)
   };
-  var STL_HEADER = "evertonians handle v0.7";
+  var STL_HEADER = "evertonians handle v0.8";
   var FINGERS = ["index", "middle", "ring", "pinkie"];
 
   // ----------------------------------------------------------------
@@ -420,6 +429,36 @@ var GEN = (function () {
       o += 4;
     }
     if (o !== b.length) throw new Error("template blob length mismatch");
+
+    // v0.8: per-row dent minimum (the groove "floor") in xd units,
+    // for the groove-floor widening stretch nodes (identical op order
+    // to the Python generator)
+    var dmin = new Array(4 * nt);
+    for (k = 0; k < 4 * nt; k++) dmin[k] = null;
+    for (i = 0; i < 4; i++) {
+      for (k = 0; k < nt; k++) {
+        if (maskLo[i * nt + k] === 65535) continue;
+        var f0 = (TEMPLATE_META.x_tip_lo + maskLo[i * nt + k] * 0.05
+                  - TEMPLATE_META.x0) / TEMPLATE_META.step;
+        var i0 = Math.floor(f0);
+        if (i0 < 0) i0 = 0;
+        if (i0 > nst - 1) i0 = nst - 1;
+        var f1 = (TEMPLATE_META.x_tip_lo + maskHi[i * nt + k] * 0.05
+                  - TEMPLATE_META.x0) / TEMPLATE_META.step;
+        var i1 = Math.floor(f1);
+        if (i1 > nst - 1) i1 = nst - 1;
+        if (i1 < i0) i1 = i0;
+        var bi = i0;
+        var bv = grid[i0 * nt + k];
+        for (j = i0 + 1; j <= i1; j++) {
+          var gv = grid[j * nt + k];
+          if (gv < bv) { bv = gv; bi = j; }
+        }
+        dmin[i * nt + k] =
+          (TEMPLATE_META.x0 + bi * TEMPLATE_META.step
+           - TEMPLATE_META.x_tip_lo) * 20.0;
+      }
+    }
 
     function buildRidge(half) {
       var out = new Float64Array(nst * nt);
@@ -652,6 +691,7 @@ var GEN = (function () {
       vx: vx, vy: vy, vz: vz, tq: tq, tris: tris,
       grid: grid, ridge: ridge, ridgeT: ridgeT,
       cyf: cyf, czf: czf, maskLo: maskLo, maskHi: maskHi,
+      dmin: dmin,
       maxHyp: maxHyp, dentG: dentG, dentT: dentT,
       x0: TEMPLATE_META.x0, step: TEMPLATE_META.step,
       tipLo: TEMPLATE_META.x_tip_lo, tipHi: TEMPLATE_META.x_tip_hi,
@@ -796,7 +836,7 @@ var GEN = (function () {
   // layout: measurements -> warp ratios and anchors
   // ----------------------------------------------------------------
   function layout(val, grooveWiden) {
-    if (grooveWiden === undefined) grooveWiden = 1.0;
+    if (grooveWiden === undefined) grooveWiden = K.DEFAULT_GROOVE_WIDEN;
     var cal = T.cal;
     var R = snap1(val.grip_diameter_inside * cal.grip);
     var P = snap1(val.palm_length * cal.palm);
@@ -974,12 +1014,45 @@ var GEN = (function () {
       for (i2 = 0; i2 < n; i2++) {
         var lo = wins[i2][1];
         var hi = wins[i2][2];
-        srcs.push(lo);
-        srcs.push(hi);
         if (wins[i2][0] < 4) {
-          dsts.push(lo - expL[i2]);
-          dsts.push(hi + expR[i2]);
+          var dmn = T.dmin[wins[i2][0] * nt + k];
+          if (dmn !== null && hi > lo) {
+            // v0.8: stretch the dent floor's own window wider
+            var d = dmn;
+            if (d < lo) d = lo;
+            if (d > hi) d = hi;
+            var wfl = (hi - lo) * K.FLOOR_FRAC;
+            var n1 = d - wfl;
+            if (n1 < lo) n1 = lo;
+            var n2 = d + wfl;
+            if (n2 > hi) n2 = hi;
+            var s = ((hi + expR[i2]) - (lo - expL[i2])) / (hi - lo);
+            var extra = (n2 - n1) * s * (K.FLOOR_WIDEN - 1.0) * 0.5;
+            // never eat more than half the mapped room on either side
+            var capL = (n1 - lo) * s * 0.5;
+            var capR = (hi - n2) * s * 0.5;
+            if (extra > capL) extra = capL;
+            if (extra > capR) extra = capR;
+            var b0 = lo - expL[i2];
+            var d1 = b0 + (n1 - lo) * s - extra;
+            var d2 = b0 + (n2 - lo) * s + extra;
+            srcs.push(lo);
+            srcs.push(n1);
+            srcs.push(n2);
+            srcs.push(hi);
+            dsts.push(b0);
+            dsts.push(d1);
+            dsts.push(d2);
+            dsts.push(hi + expR[i2]);
+          } else {
+            srcs.push(lo);
+            srcs.push(hi);
+            dsts.push(lo - expL[i2]);
+            dsts.push(hi + expR[i2]);
+          }
         } else {
+          srcs.push(lo);
+          srcs.push(hi);
           dsts.push(lo);
           dsts.push(hi);
         }
@@ -1080,6 +1153,7 @@ var GEN = (function () {
 
     var loRow = spanLo - 6, hiRow = spanHi + 6;
     var xLo = xsLo - K.THUMB_BLEND, xHi = xsHi + K.THUMB_BLEND;
+    var xDomeLo = T.tipHi - K.DOME_LEN;
 
     var rowMaps = grooveRowMaps(T, L);
     var ds = null, nds = 0;
@@ -1217,6 +1291,19 @@ var GEN = (function () {
         }
       }
 
+      // ---- v0.8 back dome (non-thumb end): clean ellipsoidal cap ----
+      if (x >= xDomeLo) {
+        var du = (x - xDomeLo) / K.DOME_LEN;
+        if (du > 1.0) du = 1.0;
+        var dw = smooth01(du / K.DOME_FADE);
+        if (dw > 0.0) {
+          var uu = 1.0 - du * du;
+          if (uu < 0.0) uu = 0.0;
+          var r0 = sampleGrid(T.grid, xDomeLo, th);
+          rfin = rfin + dw * (r0 * Math.sqrt(uu) - rfin);
+        }
+      }
+
       if (ds !== null) {
         var dl = ds[krow];
         if (dl !== null) {
@@ -1300,11 +1387,27 @@ var GEN = (function () {
     for (i = 0; i < 4; i++) {
       var lo = T.maskLo[i * T.nt + 170], hi = T.maskHi[i * T.nt + 170];
       var owin = null;
+      var fwin = null;
       if (lo !== 65535) {
         var oloXd = m170 === null ? lo : applyRowMap(m170, lo);
         var ohiXd = m170 === null ? hi : applyRowMap(m170, hi);
         owin = [r2(warpX(L, T.tipLo + oloXd * 0.05)),
                 r2(warpX(L, T.tipLo + ohiXd * 0.05))];
+        var dmn = T.dmin[i * T.nt + 170];
+        if (dmn !== null) {
+          var fd = dmn;
+          if (fd < lo) fd = lo;
+          if (fd > hi) fd = hi;
+          var fwfl = (hi - lo) * K.FLOOR_FRAC;
+          var fn1 = fd - fwfl;
+          if (fn1 < lo) fn1 = lo;
+          var fn2 = fd + fwfl;
+          if (fn2 > hi) fn2 = hi;
+          var f1Xd = m170 === null ? fn1 : applyRowMap(m170, fn1);
+          var f2Xd = m170 === null ? fn2 : applyRowMap(m170, fn2);
+          fwin = [r2(warpX(L, T.tipLo + f1Xd * 0.05)),
+                  r2(warpX(L, T.tipLo + f2Xd * 0.05))];
+        }
       }
       grooves.push({
         finger: FINGERS[i],
@@ -1316,6 +1419,8 @@ var GEN = (function () {
         output_anchor_x_mm: r2(warpX(L, T.anchorsG[i])),
         template_window_mm: lo === 65535 ? null : [r2(T.tipLo + lo * 0.05), r2(T.tipLo + hi * 0.05)],
         output_window_mm: owin,
+        output_floor_window_mm: fwin,
+        floor_widen_factor: K.FLOOR_WIDEN,
         template_dent_mm: r2(T.dentG[i])
       });
     }
@@ -1339,7 +1444,7 @@ var GEN = (function () {
       handle_within_hand_length: L.withinHand,
       groove_widen: L.grooveWiden,
       groove_audit: grooves, thumb_audit: thumb,
-      axis: "forked dome (thumb side) at x=0 to tapered bar tip; smoothed template geometry, warped per hand (v0.7)"
+      axis: "forked dome (thumb side) at x=0 to domed back cap; smoothed template geometry, warped per hand (v0.8)"
     };
   }
 
@@ -2506,16 +2611,19 @@ var GEN = (function () {
   });
 
   // ------------------------------------------------------------------
-  // STL generation (GEN = ported grip_generator_v07.py; output verified
+  // STL generation (GEN = ported grip_generator_v08.py; output verified
   // byte-identical against the Python reference build)
-  // v3.3.0: the generator shapes the handle from the user's own
+  // v3.4.0: the generator shapes the handle from the user's own
   // smoothed hand-scan template (embedded in the GEN block). All
   // scallop grooves and the thumb scoop come from the scanned shape,
   // scaled to the measured hand; each groove's band width follows its
   // finger's own measured width and its angular wrap follows that
-  // finger's own length. Web spaces are no longer measured: the
-  // ridge spacing now scales with the grip diameter. Missing fingers
-  // still get no groove.
+  // finger's own length. v0.8: finger grooves are 50% wider by
+  // default, each groove's floor (its deepest strip) is 40% wider,
+  // and the back end (opposite the thumb scoop) is capped with a
+  // clean dome. Web spaces are no longer measured: the ridge spacing
+  // now scales with the grip diameter. Missing fingers still get no
+  // groove.
   // ------------------------------------------------------------------
   var genBtn = document.getElementById("genBtn");
   var genStatusEl = document.getElementById("genStatus");
