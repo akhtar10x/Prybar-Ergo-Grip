@@ -275,8 +275,8 @@
 </div>
 
 <script>
-/* Evertonians prybar handle generator v0.9 -- JavaScript port of
- * grip_generator_v09.py.  The handle is the user's own smoothed hand
+/* Evertonians prybar handle generator v0.10 -- JavaScript port of
+ * grip_generator_v10.py.  The handle is the user's own smoothed hand
  * scan (embedded below as the "TG06" template blob), warped per hand
  * input: axial segment scales from the finger row spacing, radial
  * scale from the grip diameter, groove depths from the finger
@@ -289,14 +289,15 @@
  * so hand JSONs that still contain web_spaces are accepted and
  * ignored.  v0.8: finger groove bands are 50% wider by DEFAULT
  * (grooveWiden default 1.5) and each groove's floor (deepest strip)
- * is stretched 40% wider around its per-row dent minimum.  v0.9: the
- * groove-zone mesh is tangentially relaxed (equalises the scan's
- * uneven axial vertex spacing), a final radius-field Jacobi pass
- * rounds the last facet-level transitions, and the back end is a
- * TRUE HEMISPHERE per angular ray (radius = body radius sampled at
- * DOME_REF_X = 45.5 in the flat zone, clamped to [8, 24] mm)
- * replacing the v0.8 12 mm blended dome.  The reference hand reproduces the smoothed
- * template exactly outside the dome zone (all ratios are exactly 1).
+ * is stretched 40% wider around its per-row dent minimum.  v0.10: the
+ * back cap is REMOVED ENTIRELY (no dome, no hemisphere -- the back
+ * end is the scanned template's own taper), and the mesh relaxation
+ * plus the final radius-field Jacobi smoothing are FINGER-GROOVES-
+ * ONLY (the thumb scoop zone is excluded from every build-stage
+ * smoothing weight, so the thumb keeps exactly its template shape)
+ * and strengthened (FS_PASSES 6, FS_LAMBDA 0.5).  The reference hand
+ * reproduces the smoothed template exactly outside the finger zone
+ * (all ratios are exactly 1).
  * v0.5.5 missing / shortened finger support carries over: a null
  * finger_lengths entry = finger not present (its groove is
  * chord-filled); a null thumb_length = no thumb (the scoop is
@@ -331,15 +332,12 @@ var GEN = (function () {
     DEFAULT_GROOVE_WIDEN: 1.5,  // v0.8: bands 50% wider by default
     FLOOR_FRAC: 0.25,      // v0.8: floor window = central half of band
     FLOOR_WIDEN: 1.4,      // v0.8: floor window stretched 40% wider
-    RELAX_PASSES: 4,       // v0.9: tangential Jacobi passes (groove zone)
-    RELAX_LAMBDA: 0.5,     // v0.9: relaxation step
-    FS_PASSES: 4,          // v0.9: final radius-field Jacobi passes
-    FS_LAMBDA: 0.4,        // v0.9: final smoothing strength
-    DOME_REF_X: 45.5,      // v0.9: body radius sampling x (flat zone, mm)
-    DOME_RMIN: 8.0,        // v0.9: hemisphere radius clamp (mm)
-    DOME_RMAX: 24.0        // v0.9: hemisphere radius clamp (mm)
+    RELAX_PASSES: 4,       // v0.10: tangential Jacobi passes (finger zone)
+    RELAX_LAMBDA: 0.5,     // v0.10: relaxation step
+    FS_PASSES: 6,          // v0.10: final radius-field Jacobi passes
+    FS_LAMBDA: 0.5         // v0.10: final smoothing strength
   };
-  var STL_HEADER = "evertonians handle v0.9";
+  var STL_HEADER = "evertonians handle v0.10";
   var FINGERS = ["index", "middle", "ring", "pinkie"];
 
   // ----------------------------------------------------------------
@@ -591,6 +589,22 @@ var GEN = (function () {
       return out;
     }
 
+    function fingerRowWeights(gW) {
+      // v0.10: per-row FINGER-ONLY smoothing-zone weight (the thumb
+      // span fade is excluded, unlike thetaZoneWeights) so the build
+      // stage relaxation + final-field smoothing never touch the
+      // thumb scoop.
+      var out = new Float64Array(nt);
+      for (var k = 0; k < nt; k++) {
+        var m = 0.0;
+        for (var gi = 0; gi < 4; gi++) {
+          if (gW[gi][k] > m) m = gW[gi][k];
+        }
+        out[k] = m;
+      }
+      return out;
+    }
+
     function smoothTemplateVerts() {
       var sets = [];
       for (var i = 0; i < nv; i++) sets.push(new Set());
@@ -639,6 +653,12 @@ var GEN = (function () {
           * smooth01((zoneHi - vx[i]) / K.SM_FADE_MM);
         wv[i] = wx * rowZoneW[Math.floor(tq[i] / 200)];
       }
+      var wvF = new Float64Array(nv);
+      for (i = 0; i < nv; i++) {
+        var wxF = smooth01((vx[i] - zoneLo) / K.SM_FADE_MM)
+          * smooth01((zoneHi - vx[i]) / K.SM_FADE_MM);
+        wvF[i] = wxF * rowFingerW[Math.floor(tq[i] / 200)];
+      }
       var ro = new Float64Array(nv);
       for (i = 0; i < nv; i++) {
         var cc = centerAtL(vx[i]);
@@ -674,13 +694,15 @@ var GEN = (function () {
         }
       }
       T_smWv = wv;
+      T_smWvF = wvF;
       T_nbr = nbr;
     }
 
     var gw = grooveRowWeights();
     var gWrow = gw[0], gCenter = gw[1];
     var rowZoneW = thetaZoneWeights(gWrow);
-    var T_smWv = null, T_nbr = null;
+    var rowFingerW = fingerRowWeights(gWrow);
+    var T_smWv = null, T_smWvF = null, T_nbr = null;
     smoothTemplateVerts();
 
     var maxHyp = 0.0;
@@ -712,7 +734,8 @@ var GEN = (function () {
       spanLo: TEMPLATE_META.thumb.span_lo, spanHi: TEMPLATE_META.thumb.span_hi,
       xsLo: TEMPLATE_META.thumb.xs_lo, xsHi: TEMPLATE_META.thumb.xs_hi,
       gWrow: gWrow, gCenter: gCenter, rowZoneW: rowZoneW,
-      smWv: T_smWv, nbr: T_nbr
+      rowFingerW: rowFingerW,
+      smWv: T_smWv, smWvF: T_smWvF, nbr: T_nbr
     };
   }());
 
@@ -1167,11 +1190,12 @@ var GEN = (function () {
     var loRow = spanLo - 6, hiRow = spanHi + 6;
     var xLo = xsLo - K.THUMB_BLEND, xHi = xsHi + K.THUMB_BLEND;
 
-    // ---- v0.9: tangential relaxation of the groove-zone axial
-    // spacing (equalises the scan's uneven vertex x-spacing; the
-    // radius is re-blended from the grid at the relaxed x below).
-    // Jacobi, ascending vertex order, same as the Python. ----
-    var smWv = T.smWv, nbr = T.nbr;
+    // ---- v0.10: tangential relaxation of the FINGER-zone axial
+    // spacing (thumb excluded; equalises the scan's uneven vertex
+    // x-spacing; the radius is re-blended from the grid at the
+    // relaxed x below).  Jacobi, ascending vertex order, same as the
+    // Python. ----
+    var smWv = T.smWvF, nbr = T.nbr;
     var px = new Float64Array(T.vx);
     for (var pr = 0; pr < K.RELAX_PASSES; pr++) {
       var px2 = new Float64Array(px);
@@ -1341,27 +1365,11 @@ var GEN = (function () {
         }
       }
 
-      // ---- v0.9 hemispherical back cap (non-thumb end): a true
-      // half-ball per angular ray, radius = body radius sampled in
-      // the flat zone; overrides everything past its equator and
-      // skips the widening displacement so the sphere is exact ----
-      var inDome = false;
-      var u = T.tipHi - x;
-      if (u < K.DOME_RMAX) {
-        var r0 = sampleGrid(T.grid, K.DOME_REF_X, th);
-        if (r0 < K.DOME_RMIN) r0 = K.DOME_RMIN;
-        if (r0 > K.DOME_RMAX) r0 = K.DOME_RMAX;
-        if (u < 0.0) u = 0.0;
-        if (u < r0) {
-          var uu = 2.0 * r0 * u - u * u;
-          rfin = Math.sqrt(uu);
-          inDome = true;
-        }
-      }
-
-      // ---- v0.9: stash per-vertex placement state (the final
-      // radius field is smoothed below, then the vertex is placed) --
-      if (ds !== null && !inDome) {
+      // ---- v0.10: the back cap is GONE; every vertex (including
+      // the back taper) goes through the standard pipeline.  Stash
+      // the per-vertex placement state (the final radius field is
+      // smoothed below, then the vertex is placed) ----
+      if (ds !== null) {
         var dl = ds[krow];
         if (dl !== null) {
           var fD = xd / K.DS_STEP;
@@ -1381,10 +1389,11 @@ var GEN = (function () {
       xs[i] = x;
     }
 
-    // ---- v0.9 final-field smoothing: a Jacobi pass over the
-    // finished radius field inside the groove + thumb zone, rounding
-    // the last facet-level transitions.  Zone-weighted, Jacobi,
-    // ascending vertex order, mirrored exactly by the Python. ----
+    // ---- v0.10 final-field smoothing: a Jacobi pass over the
+    // finished radius field inside the FINGER-groove zone only
+    // (thumb excluded), rounding the last facet-level transitions.
+    // Zone-weighted, Jacobi, ascending vertex order, mirrored
+    // exactly by the Python. ----
     for (var fp = 0; fp < K.FS_PASSES; fp++) {
       var rf2 = new Float64Array(rfs);
       for (var fi = 0; fi < nv; fi++) {
@@ -1528,22 +1537,6 @@ var GEN = (function () {
       template_row_span: [T.spanLo, T.spanHi],
       template_dent_mm: r2(T.dentT)
     };
-    var dlo = 1e9, dhi = -1e9;
-    for (var dk = 0; dk < T.nt; dk++) {
-      var r0d = sampleGrid(T.grid, K.DOME_REF_X, dk * 2.0);
-      if (r0d < K.DOME_RMIN) r0d = K.DOME_RMIN;
-      if (r0d > K.DOME_RMAX) r0d = K.DOME_RMAX;
-      if (r0d < dlo) dlo = r0d;
-      if (r0d > dhi) dhi = r0d;
-    }
-    var backDome = {
-      type: "hemisphere",
-      ref_x_mm: K.DOME_REF_X,
-      radius_min_mm: r2(dlo),
-      radius_max_mm: r2(dhi),
-      equator_x_mm: [r2(T.tipHi - dhi), r2(T.tipHi - dlo)],
-      tip_x_mm: T.tipHi
-    };
     return {
       vertices: nv, triangles: ntri,
       watertight: watertight, volume_mm3: Math.round(vol * 10) / 10,
@@ -1555,15 +1548,14 @@ var GEN = (function () {
       handle_within_hand_length: L.withinHand,
       groove_widen: L.grooveWiden,
       groove_audit: grooves, thumb_audit: thumb,
-      back_dome: backDome,
       mesh_relax: {
         passes: K.RELAX_PASSES,
         lambda: K.RELAX_LAMBDA,
         final_field_passes: K.FS_PASSES,
         final_field_lambda: K.FS_LAMBDA,
-        zone: "groove + thumb (v0.7 weights)"
+        zone: "finger grooves only (v0.7 groove supports; thumb excluded)"
       },
-      axis: "forked dome (thumb side) at x=0 to hemispherical back cap; smoothed template geometry, warped per hand (v0.9)"
+      axis: "forked dome (thumb side) at x=0 to the scanned back taper; smoothed template geometry, warped per hand (v0.10)"
     };
   }
 
@@ -2730,18 +2722,19 @@ var GEN = (function () {
   });
 
   // ------------------------------------------------------------------
-  // STL generation (GEN = ported grip_generator_v09.py; output verified
+  // STL generation (GEN = ported grip_generator_v10.py; output verified
   // byte-identical against the Python reference build)
-  // v3.5.0: the generator shapes the handle from the user's own
+  // v3.6.0: the generator shapes the handle from the user's own
   // smoothed hand-scan template (embedded in the GEN block). All
   // scallop grooves and the thumb scoop come from the scanned shape,
   // scaled to the measured hand; each groove's band width follows its
   // finger's own measured width and its angular wrap follows that
   // finger's own length. v0.8: finger grooves are 50% wider by
   // default, each groove's floor (its deepest strip) is 40% wider.
-  // v0.9: the groove mesh is relaxed and the finished radius field is
-  // smoothed for clean facets, and the back end (opposite the thumb
-  // scoop) is a true hemisphere that meets the shaft at its equator.
+  // v0.10: the finger-groove mesh is relaxed and the finished radius
+  // field is Jacobi-smoothed for clean facets (the thumb scoop is
+  // untouched); the back end (opposite the thumb scoop) is the scanned
+  // template's own taper, with no added cap.
   // Web spaces are no longer measured: the ridge spacing now scales
   // with the grip diameter. Missing fingers still get no groove.
   // ------------------------------------------------------------------
